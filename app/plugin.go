@@ -80,6 +80,8 @@ func (a *App) ActivatePlugins() {
 		return
 	}
 
+	failedPluginsToDisable := []string{}
+
 	for _, plugin := range plugins {
 		id := plugin.Manifest.Id
 
@@ -91,24 +93,47 @@ func (a *App) ActivatePlugins() {
 		active := a.PluginEnv.IsPluginActive(id)
 
 		if pluginState.Enable && !active {
-			if err := a.PluginEnv.ActivatePlugin(id); err != nil {
+			if err := a.activatePlugin(plugin.Manifest); err != nil {
+				failedPluginsToDisable = append(failedPluginsToDisable, id)
 				l4g.Error(err.Error())
 				continue
 			}
 
-			if plugin.Manifest.HasClient() {
-				message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_PLUGIN_ACTIVATED, "", "", "", nil)
-				message.Add("manifest", plugin.Manifest.ClientManifest())
-				a.Publish(message)
-			}
-
-			l4g.Info("Activated %v plugin", id)
 		} else if !pluginState.Enable && active {
 			if err := a.deactivatePlugin(plugin.Manifest); err != nil {
 				l4g.Error(err.Error())
 			}
 		}
 	}
+
+	if len(failedPluginsToDisable) == 0 {
+		return
+	}
+
+	a.UpdateConfig(func(cfg *model.Config) {
+		for _, id := range failedPluginsToDisable {
+			cfg.PluginSettings.PluginStates[id] = &model.PluginState{Enable: false}
+		}
+	})
+
+	if err := a.SaveConfig(a.Config(), true); err != nil {
+		l4g.Error(err.Error())
+	}
+}
+
+func (a *App) activatePlugin(manifest *model.Manifest) *model.AppError {
+	if err := a.PluginEnv.ActivatePlugin(manifest.Id); err != nil {
+		return model.NewAppError("activatePlugin", "app.plugin.activate.app_error", nil, err.Error(), http.StatusBadRequest)
+	}
+
+	if manifest.HasClient() {
+		message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_PLUGIN_ACTIVATED, "", "", "", nil)
+		message.Add("manifest", manifest.ClientManifest())
+		a.Publish(message)
+	}
+
+	l4g.Info("Activated %v plugin", manifest.Id)
+	return nil
 }
 
 func (a *App) deactivatePlugin(manifest *model.Manifest) *model.AppError {
@@ -299,6 +324,10 @@ func (a *App) EnablePlugin(id string) *model.AppError {
 
 	if manifest == nil {
 		return model.NewAppError("EnablePlugin", "app.plugin.not_installed.app_error", nil, "", http.StatusBadRequest)
+	}
+
+	if err := a.activatePlugin(manifest); err != nil {
+		return err
 	}
 
 	a.UpdateConfig(func(cfg *model.Config) {
