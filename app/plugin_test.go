@@ -4,9 +4,11 @@
 package app
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
@@ -156,6 +158,20 @@ func TestPluginCommands(t *testing.T) {
 
 	require.Nil(t, th.App.EnablePlugin("foo"))
 
+	// Ideally, we would wait for the websocket activation event instead of just sleeping.
+	time.Sleep(500 * time.Millisecond)
+
+	pluginStatuses, err := th.App.GetPluginStatuses()
+	require.Nil(t, err)
+	found := false
+	for _, pluginStatus := range pluginStatuses {
+		if pluginStatus.PluginId == "foo" {
+			require.Equal(t, model.PluginStateRunning, pluginStatus.State)
+			found = true
+		}
+	}
+	require.True(t, found, "failed to find plugin foo in plugin statuses")
+
 	resp, err := th.App.ExecuteCommand(&model.CommandArgs{
 		Command:   "/foo2",
 		TeamId:    th.BasicTeam.Id,
@@ -194,4 +210,66 @@ func TestPluginCommands(t *testing.T) {
 	})
 	require.NotNil(t, err)
 	assert.Equal(t, http.StatusNotFound, err.StatusCode)
+}
+
+type pluginBadActivation struct {
+	testPlugin
+}
+
+func (p *pluginBadActivation) OnActivate(api plugin.API) error {
+	return errors.New("won't activate for some reason")
+}
+
+func TestPluginBadActivation(t *testing.T) {
+	th := Setup().InitBasic()
+	defer th.TearDown()
+
+	th.InstallPlugin(&model.Manifest{
+		Id: "foo",
+	}, &pluginBadActivation{})
+
+	t.Run("EnablePlugin bad activation", func(t *testing.T) {
+		err := th.App.EnablePlugin("foo")
+		assert.Nil(t, err)
+
+		// Ideally, we would wait for the websocket activation event instead of just
+		// sleeping.
+		time.Sleep(500 * time.Millisecond)
+
+		pluginStatuses, err := th.App.GetPluginStatuses()
+		require.Nil(t, err)
+		found := false
+		for _, pluginStatus := range pluginStatuses {
+			if pluginStatus.PluginId == "foo" {
+				require.Equal(t, model.PluginStateFailedToStart, pluginStatus.State)
+				found = true
+			}
+		}
+		require.True(t, found, "failed to find plugin foo in plugin statuses")
+	})
+}
+
+func TestGetPluginStatusesDisabled(t *testing.T) {
+	th := Setup().InitBasic()
+	defer th.TearDown()
+
+	th.App.UpdateConfig(func(cfg *model.Config) {
+		*cfg.PluginSettings.Enable = false
+	})
+
+	_, err := th.App.GetPluginStatuses()
+	require.EqualError(t, err, "GetPluginStatuses: Plugins have been disabled. Please check your logs for details., ")
+}
+
+func TestGetPluginStatuses(t *testing.T) {
+	th := Setup().InitBasic()
+	defer th.TearDown()
+
+	th.App.UpdateConfig(func(cfg *model.Config) {
+		*cfg.PluginSettings.Enable = true
+	})
+
+	pluginStatuses, err := th.App.GetPluginStatuses()
+	require.Nil(t, err)
+	require.NotNil(t, pluginStatuses)
 }

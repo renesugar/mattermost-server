@@ -4,10 +4,56 @@
 package model
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestConfigDefaults(t *testing.T) {
+	t.Parallel()
+
+	t.Run("somewhere nil when uninitialized", func(t *testing.T) {
+		c := Config{}
+		require.False(t, checkNowhereNil(t, "config", c))
+	})
+
+	t.Run("nowhere nil when initialized", func(t *testing.T) {
+		c := Config{}
+		c.SetDefaults()
+		require.True(t, checkNowhereNil(t, "config", c))
+	})
+
+	t.Run("nowhere nil when partially initialized", func(t *testing.T) {
+		var recursivelyUninitialize func(*Config, string, reflect.Value)
+		recursivelyUninitialize = func(config *Config, name string, v reflect.Value) {
+			if v.Type().Kind() == reflect.Ptr {
+				// Set every pointer we find in the tree to nil
+				v.Set(reflect.Zero(v.Type()))
+				require.True(t, v.IsNil())
+
+				// SetDefaults on the root config should make it non-nil, otherwise
+				// it means that SetDefaults isn't being called recursively in
+				// all cases.
+				config.SetDefaults()
+				if assert.False(t, v.IsNil(), "%s should be non-nil after SetDefaults()", name) {
+					recursivelyUninitialize(config, fmt.Sprintf("(*%s)", name), v.Elem())
+				}
+
+			} else if v.Type().Kind() == reflect.Struct {
+				for i := 0; i < v.NumField(); i++ {
+					recursivelyUninitialize(config, fmt.Sprintf("%s.%s", name, v.Type().Field(i).Name), v.Field(i))
+				}
+			}
+		}
+
+		c := Config{}
+		c.SetDefaults()
+		recursivelyUninitialize(&c, "config", reflect.ValueOf(&c).Elem())
+	})
+}
 
 func TestConfigDefaultFileSettingsDirectory(t *testing.T) {
 	c1 := Config{}
@@ -183,21 +229,123 @@ func TestMessageExportSettingsIsValidActiance(t *testing.T) {
 	require.Nil(t, mes.isValid(*fs))
 }
 
-func TestMessageExportSettingsIsValidGlobalRelay(t *testing.T) {
+func TestMessageExportSettingsIsValidGlobalRelaySettingsMissing(t *testing.T) {
 	fs := &FileSettings{
 		DriverName: NewString("foo"), // bypass file location check
 	}
 	mes := &MessageExportSettings{
-		EnableExport:            NewBool(true),
-		ExportFormat:            NewString(COMPLIANCE_EXPORT_TYPE_GLOBALRELAY),
-		ExportFromTimestamp:     NewInt64(0),
-		DailyRunTime:            NewString("15:04"),
-		BatchSize:               NewInt(100),
-		GlobalRelayEmailAddress: NewString("test@mattermost.com"),
+		EnableExport:        NewBool(true),
+		ExportFormat:        NewString(COMPLIANCE_EXPORT_TYPE_GLOBALRELAY),
+		ExportFromTimestamp: NewInt64(0),
+		DailyRunTime:        NewString("15:04"),
+		BatchSize:           NewInt(100),
 	}
 
-	// should pass because everything is valid
-	require.Nil(t, mes.isValid(*fs))
+	// should fail because globalrelay settings are missing
+	require.Error(t, mes.isValid(*fs))
+}
+
+func TestMessageExportSettingsIsValidGlobalRelaySettingsInvalidCustomerType(t *testing.T) {
+	fs := &FileSettings{
+		DriverName: NewString("foo"), // bypass file location check
+	}
+	mes := &MessageExportSettings{
+		EnableExport:        NewBool(true),
+		ExportFormat:        NewString(COMPLIANCE_EXPORT_TYPE_GLOBALRELAY),
+		ExportFromTimestamp: NewInt64(0),
+		DailyRunTime:        NewString("15:04"),
+		BatchSize:           NewInt(100),
+		GlobalRelaySettings: &GlobalRelayMessageExportSettings{
+			CustomerType: NewString("Invalid"),
+			EmailAddress: NewString("valid@mattermost.com"),
+			SmtpUsername: NewString("SomeUsername"),
+			SmtpPassword: NewString("SomePassword"),
+		},
+	}
+
+	// should fail because customer type is invalid
+	require.Error(t, mes.isValid(*fs))
+}
+
+// func TestMessageExportSettingsIsValidGlobalRelaySettingsInvalidEmailAddress(t *testing.T) {
+func TestMessageExportSettingsGlobalRelaySettings(t *testing.T) {
+	fs := &FileSettings{
+		DriverName: NewString("foo"), // bypass file location check
+	}
+	tests := []struct {
+		name    string
+		value   *GlobalRelayMessageExportSettings
+		success bool
+	}{
+		{
+			"Invalid email address",
+			&GlobalRelayMessageExportSettings{
+				CustomerType: NewString(GLOBALRELAY_CUSTOMER_TYPE_A9),
+				EmailAddress: NewString("invalidEmailAddress"),
+				SmtpUsername: NewString("SomeUsername"),
+				SmtpPassword: NewString("SomePassword"),
+			},
+			false,
+		},
+		{
+			"Missing smtp username",
+			&GlobalRelayMessageExportSettings{
+				CustomerType: NewString(GLOBALRELAY_CUSTOMER_TYPE_A10),
+				EmailAddress: NewString("valid@mattermost.com"),
+				SmtpPassword: NewString("SomePassword"),
+			},
+			false,
+		},
+		{
+			"Invalid smtp username",
+			&GlobalRelayMessageExportSettings{
+				CustomerType: NewString(GLOBALRELAY_CUSTOMER_TYPE_A10),
+				EmailAddress: NewString("valid@mattermost.com"),
+				SmtpUsername: NewString(""),
+				SmtpPassword: NewString("SomePassword"),
+			},
+			false,
+		},
+		{
+			"Invalid smtp password",
+			&GlobalRelayMessageExportSettings{
+				CustomerType: NewString(GLOBALRELAY_CUSTOMER_TYPE_A10),
+				EmailAddress: NewString("valid@mattermost.com"),
+				SmtpUsername: NewString("SomeUsername"),
+				SmtpPassword: NewString(""),
+			},
+			false,
+		},
+		{
+			"Valid data",
+			&GlobalRelayMessageExportSettings{
+				CustomerType: NewString(GLOBALRELAY_CUSTOMER_TYPE_A9),
+				EmailAddress: NewString("valid@mattermost.com"),
+				SmtpUsername: NewString("SomeUsername"),
+				SmtpPassword: NewString("SomePassword"),
+			},
+			true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mes := &MessageExportSettings{
+				EnableExport:        NewBool(true),
+				ExportFormat:        NewString(COMPLIANCE_EXPORT_TYPE_GLOBALRELAY),
+				ExportFromTimestamp: NewInt64(0),
+				DailyRunTime:        NewString("15:04"),
+				BatchSize:           NewInt(100),
+				GlobalRelaySettings: tt.value,
+			}
+
+			if tt.success {
+				require.Nil(t, mes.isValid(*fs))
+			} else {
+				require.Error(t, mes.isValid(*fs))
+			}
+		})
+	}
 }
 
 func TestMessageExportSetDefaults(t *testing.T) {
@@ -287,4 +435,87 @@ func TestMessageExportSetDefaultsExportDisabledExportFromTimestampNonZero(t *tes
 	require.Equal(t, "01:00", *mes.DailyRunTime)
 	require.Equal(t, int64(0), *mes.ExportFromTimestamp)
 	require.Equal(t, 10000, *mes.BatchSize)
+}
+
+func TestDisplaySettingsIsValidCustomUrlSchemes(t *testing.T) {
+	tests := []struct {
+		name  string
+		value []string
+		valid bool
+	}{
+		{
+			name:  "empty",
+			value: []string{},
+			valid: true,
+		},
+		{
+			name:  "custom protocol",
+			value: []string{"steam"},
+			valid: true,
+		},
+		{
+			name:  "multiple custom protocols",
+			value: []string{"bitcoin", "rss", "redis"},
+			valid: true,
+		},
+		{
+			name:  "containing numbers",
+			value: []string{"ut2004", "ts3server", "h323"},
+			valid: true,
+		},
+		{
+			name:  "containing period",
+			value: []string{"iris.beep"},
+			valid: true,
+		},
+		{
+			name:  "containing hyphen",
+			value: []string{"ms-excel"},
+			valid: true,
+		},
+		{
+			name:  "containing plus",
+			value: []string{"coap+tcp", "coap+ws"},
+			valid: true,
+		},
+		{
+			name:  "starting with number",
+			value: []string{"4four"},
+			valid: false,
+		},
+		{
+			name:  "starting with period",
+			value: []string{"data", ".dot"},
+			valid: false,
+		},
+		{
+			name:  "starting with hyphen",
+			value: []string{"-hyphen", "dns"},
+			valid: false,
+		},
+		{
+			name:  "invalid symbols",
+			value: []string{"!!fun!!"},
+			valid: false,
+		},
+		{
+			name:  "invalid letters",
+			value: []string{"école"},
+			valid: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ds := &DisplaySettings{}
+			ds.SetDefaults()
+
+			ds.CustomUrlSchemes = &test.value
+
+			if err := ds.isValid(); err != nil && test.valid {
+				t.Error("Expected CustomUrlSchemes to be valid but got error:", err)
+			} else if err == nil && !test.valid {
+				t.Error("Expected CustomUrlSchemes to be invalid but got no error")
+			}
+		})
+	}
 }

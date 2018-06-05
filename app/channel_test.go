@@ -110,7 +110,7 @@ func TestMoveChannel(t *testing.T) {
 	}
 }
 
-func TestJoinDefaultChannelsTownSquare(t *testing.T) {
+func TestJoinDefaultChannelsCreatesChannelMemberHistoryRecordTownSquare(t *testing.T) {
 	th := Setup().InitBasic()
 	defer th.TearDown()
 
@@ -120,7 +120,7 @@ func TestJoinDefaultChannelsTownSquare(t *testing.T) {
 
 	// create a new user that joins the default channels
 	user := th.CreateUser()
-	th.App.JoinDefaultChannels(th.BasicTeam.Id, user, model.CHANNEL_USER_ROLE_ID, "")
+	th.App.JoinDefaultChannels(th.BasicTeam.Id, user, false, "")
 
 	// there should be a ChannelMemberHistory record for the user
 	histories := store.Must(th.App.Srv.Store.ChannelMemberHistory().GetUsersInChannelDuring(model.GetMillis()-100, model.GetMillis()+100, townSquareChannelId)).([]*model.ChannelMemberHistoryResult)
@@ -136,7 +136,7 @@ func TestJoinDefaultChannelsTownSquare(t *testing.T) {
 	assert.True(t, found)
 }
 
-func TestJoinDefaultChannelsOffTopic(t *testing.T) {
+func TestJoinDefaultChannelsCreatesChannelMemberHistoryRecordOffTopic(t *testing.T) {
 	th := Setup().InitBasic()
 	defer th.TearDown()
 
@@ -146,7 +146,7 @@ func TestJoinDefaultChannelsOffTopic(t *testing.T) {
 
 	// create a new user that joins the default channels
 	user := th.CreateUser()
-	th.App.JoinDefaultChannels(th.BasicTeam.Id, user, model.CHANNEL_USER_ROLE_ID, "")
+	th.App.JoinDefaultChannels(th.BasicTeam.Id, user, false, "")
 
 	// there should be a ChannelMemberHistory record for the user
 	histories := store.Must(th.App.Srv.Store.ChannelMemberHistory().GetUsersInChannelDuring(model.GetMillis()-100, model.GetMillis()+100, offTopicChannelId)).([]*model.ChannelMemberHistoryResult)
@@ -162,7 +162,7 @@ func TestJoinDefaultChannelsOffTopic(t *testing.T) {
 	assert.True(t, found)
 }
 
-func TestCreateChannelPublic(t *testing.T) {
+func TestCreateChannelPublicCreatesChannelMemberHistoryRecord(t *testing.T) {
 	th := Setup().InitBasic()
 	defer th.TearDown()
 
@@ -176,7 +176,7 @@ func TestCreateChannelPublic(t *testing.T) {
 	assert.Equal(t, publicChannel.Id, histories[0].ChannelId)
 }
 
-func TestCreateChannelPrivate(t *testing.T) {
+func TestCreateChannelPrivateCreatesChannelMemberHistoryRecord(t *testing.T) {
 	th := Setup().InitBasic()
 	defer th.TearDown()
 
@@ -205,7 +205,7 @@ func TestUpdateChannelPrivacy(t *testing.T) {
 	}
 }
 
-func TestCreateGroupChannel(t *testing.T) {
+func TestCreateGroupChannelCreatesChannelMemberHistoryRecord(t *testing.T) {
 	th := Setup().InitBasic()
 	defer th.TearDown()
 
@@ -233,7 +233,62 @@ func TestCreateGroupChannel(t *testing.T) {
 	}
 }
 
-func TestAddUserToChannel(t *testing.T) {
+func TestCreateDirectChannelCreatesChannelMemberHistoryRecord(t *testing.T) {
+	th := Setup().InitBasic()
+	defer th.TearDown()
+
+	user1 := th.CreateUser()
+	user2 := th.CreateUser()
+
+	if channel, err := th.App.CreateDirectChannel(user1.Id, user2.Id); err != nil {
+		t.Fatal("Failed to create direct channel. Error: " + err.Message)
+	} else {
+		// there should be a ChannelMemberHistory record for both users
+		histories := store.Must(th.App.Srv.Store.ChannelMemberHistory().GetUsersInChannelDuring(model.GetMillis()-100, model.GetMillis()+100, channel.Id)).([]*model.ChannelMemberHistoryResult)
+		assert.Len(t, histories, 2)
+
+		historyId0 := histories[0].UserId
+		historyId1 := histories[1].UserId
+		switch historyId0 {
+		case user1.Id:
+			assert.Equal(t, user2.Id, historyId1)
+		case user2.Id:
+			assert.Equal(t, user1.Id, historyId1)
+		default:
+			t.Fatal("Unexpected user id " + historyId0 + " in ChannelMemberHistory table")
+		}
+	}
+}
+
+func TestGetDirectChannelCreatesChannelMemberHistoryRecord(t *testing.T) {
+	th := Setup().InitBasic()
+	defer th.TearDown()
+
+	user1 := th.CreateUser()
+	user2 := th.CreateUser()
+
+	// this function call implicitly creates a direct channel between the two users if one doesn't already exist
+	if channel, err := th.App.GetDirectChannel(user1.Id, user2.Id); err != nil {
+		t.Fatal("Failed to create direct channel. Error: " + err.Message)
+	} else {
+		// there should be a ChannelMemberHistory record for both users
+		histories := store.Must(th.App.Srv.Store.ChannelMemberHistory().GetUsersInChannelDuring(model.GetMillis()-100, model.GetMillis()+100, channel.Id)).([]*model.ChannelMemberHistoryResult)
+		assert.Len(t, histories, 2)
+
+		historyId0 := histories[0].UserId
+		historyId1 := histories[1].UserId
+		switch historyId0 {
+		case user1.Id:
+			assert.Equal(t, user2.Id, historyId1)
+		case user2.Id:
+			assert.Equal(t, user1.Id, historyId1)
+		default:
+			t.Fatal("Unexpected user id " + historyId0 + " in ChannelMemberHistory table")
+		}
+	}
+}
+
+func TestAddUserToChannelCreatesChannelMemberHistoryRecord(t *testing.T) {
 	th := Setup().InitBasic()
 	defer th.TearDown()
 
@@ -263,7 +318,7 @@ func TestAddUserToChannel(t *testing.T) {
 	assert.Equal(t, groupUserIds, channelMemberHistoryUserIds)
 }
 
-func TestRemoveUserFromChannel(t *testing.T) {
+func TestRemoveUserFromChannelUpdatesChannelMemberHistoryRecord(t *testing.T) {
 	th := Setup().InitBasic()
 	defer th.TearDown()
 
@@ -284,4 +339,63 @@ func TestRemoveUserFromChannel(t *testing.T) {
 	assert.Equal(t, th.BasicUser.Id, histories[0].UserId)
 	assert.Equal(t, publicChannel.Id, histories[0].ChannelId)
 	assert.NotNil(t, histories[0].LeaveTime)
+}
+
+func TestAddChannelMemberNoUserRequestor(t *testing.T) {
+	th := Setup().InitBasic()
+	defer th.TearDown()
+
+	// create a user and add it to a channel
+	user := th.CreateUser()
+	if _, err := th.App.AddTeamMember(th.BasicTeam.Id, user.Id); err != nil {
+		t.Fatal("Failed to add user to team. Error: " + err.Message)
+	}
+
+	groupUserIds := make([]string, 0)
+	groupUserIds = append(groupUserIds, th.BasicUser.Id)
+	groupUserIds = append(groupUserIds, user.Id)
+
+	channel := th.createChannel(th.BasicTeam, model.CHANNEL_OPEN)
+	userRequestorId := ""
+	postRootId := ""
+	if _, err := th.App.AddChannelMember(user.Id, channel, userRequestorId, postRootId); err != nil {
+		t.Fatal("Failed to add user to channel. Error: " + err.Message)
+	}
+
+	// there should be a ChannelMemberHistory record for the user
+	histories := store.Must(th.App.Srv.Store.ChannelMemberHistory().GetUsersInChannelDuring(model.GetMillis()-100, model.GetMillis()+100, channel.Id)).([]*model.ChannelMemberHistoryResult)
+	assert.Len(t, histories, 2)
+	channelMemberHistoryUserIds := make([]string, 0)
+	for _, history := range histories {
+		assert.Equal(t, channel.Id, history.ChannelId)
+		channelMemberHistoryUserIds = append(channelMemberHistoryUserIds, history.UserId)
+	}
+	assert.Equal(t, groupUserIds, channelMemberHistoryUserIds)
+
+	postList := store.Must(th.App.Srv.Store.Post().GetPosts(channel.Id, 0, 1, false)).(*model.PostList)
+	if assert.Len(t, postList.Order, 1) {
+		post := postList.Posts[postList.Order[0]]
+
+		assert.Equal(t, model.POST_JOIN_CHANNEL, post.Type)
+		assert.Equal(t, user.Id, post.UserId)
+		assert.Equal(t, user.Username, post.Props["username"])
+	}
+}
+
+func TestAppUpdateChannelScheme(t *testing.T) {
+	th := Setup().InitBasic()
+	defer th.TearDown()
+
+	channel := th.BasicChannel
+	mockID := model.NewString("x")
+	channel.SchemeId = mockID
+
+	updatedChannel, err := th.App.UpdateChannelScheme(channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if updatedChannel.SchemeId != mockID {
+		t.Fatal("Wrong Channel SchemeId")
+	}
 }

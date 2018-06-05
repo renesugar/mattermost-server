@@ -79,6 +79,7 @@ func NewSqlUserStore(sqlStore SqlStore, metrics einterfaces.MetricsInterface) st
 		table.ColMap("Locale").SetMaxSize(5)
 		table.ColMap("MfaSecret").SetMaxSize(128)
 		table.ColMap("Position").SetMaxSize(128)
+		table.ColMap("Timezone").SetMaxSize(256)
 	}
 
 	return us
@@ -412,10 +413,57 @@ func (us SqlUserStore) GetProfilesInChannel(channelId string, offset int, limit 
 	return store.Do(func(result *store.StoreResult) {
 		var users []*model.User
 
-		query := "SELECT Users.* FROM Users, ChannelMembers WHERE ChannelMembers.ChannelId = :ChannelId AND Users.Id = ChannelMembers.UserId ORDER BY Users.Username ASC LIMIT :Limit OFFSET :Offset"
+		query := `
+				SELECT 
+					Users.* 
+				FROM 
+					Users, ChannelMembers 
+				WHERE 
+					ChannelMembers.ChannelId = :ChannelId 
+					AND Users.Id = ChannelMembers.UserId 
+				ORDER BY 
+					Users.Username ASC 
+				LIMIT :Limit OFFSET :Offset
+		`
 
 		if _, err := us.GetReplica().Select(&users, query, map[string]interface{}{"ChannelId": channelId, "Offset": offset, "Limit": limit}); err != nil {
 			result.Err = model.NewAppError("SqlUserStore.GetProfilesInChannel", "store.sql_user.get_profiles.app_error", nil, err.Error(), http.StatusInternalServerError)
+		} else {
+
+			for _, u := range users {
+				u.Sanitize(map[string]bool{})
+			}
+
+			result.Data = users
+		}
+	})
+}
+
+func (us SqlUserStore) GetProfilesInChannelByStatus(channelId string, offset int, limit int) store.StoreChannel {
+	return store.Do(func(result *store.StoreResult) {
+		var users []*model.User
+
+		query := `
+			SELECT 
+				Users.*
+			FROM Users
+				INNER JOIN ChannelMembers ON Users.Id = ChannelMembers.UserId
+				LEFT JOIN Status  ON Users.Id = Status.UserId
+			WHERE
+				ChannelMembers.ChannelId = :ChannelId
+			ORDER BY 
+				CASE Status
+					WHEN 'online' THEN 1
+					WHEN 'away' THEN 2
+					WHEN 'dnd' THEN 3
+					ELSE 4
+				END,
+				Users.Username ASC 
+			LIMIT :Limit OFFSET :Offset
+		`
+
+		if _, err := us.GetReplica().Select(&users, query, map[string]interface{}{"ChannelId": channelId, "Offset": offset, "Limit": limit}); err != nil {
+			result.Err = model.NewAppError("SqlUserStore.GetProfilesInChannelByStatus", "store.sql_user.get_profiles.app_error", nil, err.Error(), http.StatusInternalServerError)
 		} else {
 
 			for _, u := range users {
@@ -771,13 +819,12 @@ func (us SqlUserStore) GetByUsername(username string) store.StoreChannel {
 	})
 }
 
-func (us SqlUserStore) GetForLogin(loginId string, allowSignInWithUsername, allowSignInWithEmail, ldapEnabled bool) store.StoreChannel {
+func (us SqlUserStore) GetForLogin(loginId string, allowSignInWithUsername, allowSignInWithEmail bool) store.StoreChannel {
 	return store.Do(func(result *store.StoreResult) {
 		params := map[string]interface{}{
 			"LoginId":                 loginId,
 			"AllowSignInWithUsername": allowSignInWithUsername,
 			"AllowSignInWithEmail":    allowSignInWithEmail,
-			"LdapEnabled":             ldapEnabled,
 		}
 
 		users := []*model.User{}
@@ -789,8 +836,7 @@ func (us SqlUserStore) GetForLogin(loginId string, allowSignInWithUsername, allo
 				Users
 			WHERE
 				(:AllowSignInWithUsername AND Username = :LoginId)
-				OR (:AllowSignInWithEmail AND Email = :LoginId)
-				OR (:LdapEnabled AND AuthService = '`+model.USER_AUTH_SERVICE_LDAP+`' AND AuthData = :LoginId)`,
+				OR (:AllowSignInWithEmail AND Email = :LoginId)`,
 			params); err != nil {
 			result.Err = model.NewAppError("SqlUserStore.GetForLogin", "store.sql_user.get_for_login.app_error", nil, err.Error(), http.StatusInternalServerError)
 		} else if len(users) == 1 {

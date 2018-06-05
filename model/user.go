@@ -22,7 +22,6 @@ const (
 	USER_NOTIFY_NONE             = "none"
 	DESKTOP_NOTIFY_PROP          = "desktop"
 	DESKTOP_SOUND_NOTIFY_PROP    = "desktop_sound"
-	DESKTOP_DURATION_NOTIFY_PROP = "desktop_duration"
 	MARK_UNREAD_NOTIFY_PROP      = "mark_unread"
 	PUSH_NOTIFY_PROP             = "push"
 	PUSH_STATUS_NOTIFY_PROP      = "push_status"
@@ -71,6 +70,7 @@ type User struct {
 	LastPictureUpdate  int64     `json:"last_picture_update,omitempty"`
 	FailedAttempts     int       `json:"failed_attempts,omitempty"`
 	Locale             string    `json:"locale"`
+	Timezone           StringMap `json:"timezone"`
 	MfaActive          bool      `json:"mfa_active,omitempty"`
 	MfaSecret          string    `json:"mfa_secret,omitempty"`
 	LastActivityAt     int64     `db:"-" json:"last_activity_at,omitempty"`
@@ -86,12 +86,30 @@ type UserPatch struct {
 	Props       StringMap `json:"props,omitempty"`
 	NotifyProps StringMap `json:"notify_props,omitempty"`
 	Locale      *string   `json:"locale"`
+	Timezone    StringMap `json:"timezone"`
 }
 
 type UserAuth struct {
 	Password    string  `json:"password,omitempty"`
 	AuthData    *string `json:"auth_data,omitempty"`
 	AuthService string  `json:"auth_service,omitempty"`
+}
+
+func (u *User) DeepCopy() *User {
+	copyUser := *u
+	if u.AuthData != nil {
+		copyUser.AuthData = NewString(*u.AuthData)
+	}
+	if u.Props != nil {
+		copyUser.Props = CopyStringMap(u.Props)
+	}
+	if u.NotifyProps != nil {
+		copyUser.NotifyProps = CopyStringMap(u.NotifyProps)
+	}
+	if u.Timezone != nil {
+		copyUser.Timezone = CopyStringMap(u.Timezone)
+	}
+	return &copyUser
 }
 
 // IsValid validates the user and returns an error if it isn't configured
@@ -208,6 +226,10 @@ func (u *User) PreSave() {
 		u.SetDefaultNotifications()
 	}
 
+	if u.Timezone == nil {
+		u.Timezone = DefaultUserTimezone()
+	}
+
 	if len(u.Password) > 0 {
 		u.Password = HashPassword(u.Password)
 	}
@@ -302,6 +324,10 @@ func (u *User) Patch(patch *UserPatch) {
 	if patch.Locale != nil {
 		u.Locale = *patch.Locale
 	}
+
+	if patch.Timezone != nil {
+		u.Timezone = patch.Timezone
+	}
 }
 
 // ToJson convert a User to a json string
@@ -373,12 +399,6 @@ func (u *User) MakeNonNil() {
 	}
 }
 
-func (u *User) AddProp(key string, value string) {
-	u.MakeNonNil()
-
-	u.Props[key] = value
-}
-
 func (u *User) AddNotifyProp(key string, value string) {
 	u.MakeNonNil()
 
@@ -428,7 +448,7 @@ func IsValidUserRoles(userRoles string) bool {
 	roles := strings.Fields(userRoles)
 
 	for _, r := range roles {
-		if !isValidRole(r) {
+		if !IsValidRoleName(r) {
 			return false
 		}
 	}
@@ -439,11 +459,6 @@ func IsValidUserRoles(userRoles string) bool {
 	}
 
 	return true
-}
-
-func isValidRole(roleId string) bool {
-	_, ok := DefaultRoles[roleId]
-	return ok
 }
 
 // Make sure you acually want to use this function. In context.go there are functions to check permissions

@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
@@ -14,12 +15,12 @@ import (
 	"strings"
 	"time"
 
-	l4g "github.com/alecthomas/log4go"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/acme/autocert"
 
+	"github.com/mattermost/mattermost-server/mlog"
 	"github.com/mattermost/mattermost-server/model"
 	"github.com/mattermost/mattermost-server/store"
 	"github.com/mattermost/mattermost-server/utils"
@@ -49,8 +50,8 @@ type RecoveryLogger struct {
 }
 
 func (rl *RecoveryLogger) Println(i ...interface{}) {
-	l4g.Error("Please check the std error output for the stack trace")
-	l4g.Error(i)
+	mlog.Error("Please check the std error output for the stack trace")
+	mlog.Error(fmt.Sprint(i))
 }
 
 type CorsWrapper struct {
@@ -84,28 +85,6 @@ func (cw *CorsWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 const TIME_TO_WAIT_FOR_CONNECTIONS_TO_CLOSE_ON_SERVER_SHUTDOWN = time.Second
 
-type VaryBy struct {
-	useIP   bool
-	useAuth bool
-}
-
-func (m *VaryBy) Key(r *http.Request) string {
-	key := ""
-
-	if m.useAuth {
-		token, tokenLocation := ParseAuthTokenFromRequest(r)
-		if tokenLocation != TokenLocationNotFound {
-			key += token
-		} else if m.useIP { // If we don't find an authentication token and IP based is enabled, fall back to IP
-			key += utils.GetIpAddress(r)
-		}
-	} else if m.useIP { // Only if Auth based is not enabed do we use a plain IP based
-		key = utils.GetIpAddress(r)
-	}
-
-	return key
-}
-
 func redirectHTTPToHTTPS(w http.ResponseWriter, r *http.Request) {
 	if r.Host == "" {
 		http.Error(w, "Not Found", http.StatusNotFound)
@@ -118,12 +97,12 @@ func redirectHTTPToHTTPS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) StartServer() error {
-	l4g.Info(utils.T("api.server.start_server.starting.info"))
+	mlog.Info("Starting Server...")
 
 	var handler http.Handler = &CorsWrapper{a.Config, a.Srv.Router}
 
 	if *a.Config().RateLimitSettings.Enable {
-		l4g.Info(utils.T("api.server.start_server.rate.info"))
+		mlog.Info("RateLimiter is enabled")
 
 		rateLimiter, err := NewRateLimiter(&a.Config().RateLimitSettings)
 		if err != nil {
@@ -138,6 +117,7 @@ func (a *App) StartServer() error {
 		Handler:      handlers.RecoveryHandler(handlers.RecoveryLogger(&RecoveryLogger{}), handlers.PrintRecoveryStack(true))(handler),
 		ReadTimeout:  time.Duration(*a.Config().ServiceSettings.ReadTimeout) * time.Second,
 		WriteTimeout: time.Duration(*a.Config().ServiceSettings.WriteTimeout) * time.Second,
+		ErrorLog:     a.Log.StdLog(mlog.String("source", "httpserver")),
 	}
 
 	addr := *a.Config().ServiceSettings.ListenAddress
@@ -156,7 +136,7 @@ func (a *App) StartServer() error {
 	}
 	a.Srv.ListenAddr = listener.Addr().(*net.TCPAddr)
 
-	l4g.Info(utils.T("api.server.start_server.listening.info"), listener.Addr().String())
+	mlog.Info(fmt.Sprintf("Server is listening on %v", listener.Addr().String()))
 
 	// Migration from old let's encrypt library
 	if *a.Config().ServiceSettings.UseLetsEncrypt {
@@ -171,26 +151,39 @@ func (a *App) StartServer() error {
 	}
 
 	if *a.Config().ServiceSettings.Forward80To443 {
-		if host, _, err := net.SplitHostPort(addr); err != nil {
-			l4g.Error("Unable to setup forwarding: " + err.Error())
+		if host, port, err := net.SplitHostPort(addr); err != nil {
+			mlog.Error("Unable to setup forwarding: " + err.Error())
+		} else if port != "443" {
+			return fmt.Errorf(utils.T("api.server.start_server.forward80to443.enabled_but_listening_on_wrong_port"), port)
 		} else {
 			httpListenAddress := net.JoinHostPort(host, "http")
 
 			if *a.Config().ServiceSettings.UseLetsEncrypt {
-				go http.ListenAndServe(httpListenAddress, m.HTTPHandler(nil))
+				server := &http.Server{
+					Addr:     httpListenAddress,
+					Handler:  m.HTTPHandler(nil),
+					ErrorLog: a.Log.StdLog(mlog.String("source", "le_forwarder_server")),
+				}
+				go server.ListenAndServe()
 			} else {
 				go func() {
 					redirectListener, err := net.Listen("tcp", httpListenAddress)
 					if err != nil {
-						l4g.Error("Unable to setup forwarding: " + err.Error())
+						mlog.Error("Unable to setup forwarding: " + err.Error())
 						return
 					}
 					defer redirectListener.Close()
 
-					http.Serve(redirectListener, http.HandlerFunc(redirectHTTPToHTTPS))
+					server := &http.Server{
+						Handler:  handler,
+						ErrorLog: a.Log.StdLog(mlog.String("source", "forwarder_server")),
+					}
+					server.Serve(redirectListener)
 				}()
 			}
 		}
+	} else if *a.Config().ServiceSettings.UseLetsEncrypt {
+		return errors.New(utils.T("api.server.start_server.forward80to443.disabled_while_using_lets_encrypt"))
 	}
 
 	a.Srv.didFinishListen = make(chan struct{})
@@ -214,38 +207,13 @@ func (a *App) StartServer() error {
 			err = a.Srv.Server.Serve(listener)
 		}
 		if err != nil && err != http.ErrServerClosed {
-			l4g.Critical(utils.T("api.server.start_server.starting.critical"), err)
+			mlog.Critical(fmt.Sprintf("Error starting server, err:%v", err))
 			time.Sleep(time.Second)
 		}
 		close(a.Srv.didFinishListen)
 	}()
 
 	return nil
-}
-
-type tcpKeepAliveListener struct {
-	*net.TCPListener
-}
-
-func (ln tcpKeepAliveListener) Accept() (c net.Conn, err error) {
-	tc, err := ln.AcceptTCP()
-	if err != nil {
-		return
-	}
-	tc.SetKeepAlive(true)
-	tc.SetKeepAlivePeriod(3 * time.Minute)
-	return tc, nil
-}
-
-func (a *App) Listen(addr string) (net.Listener, error) {
-	if addr == "" {
-		addr = ":http"
-	}
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return nil, err
-	}
-	return tcpKeepAliveListener{ln.(*net.TCPListener)}, nil
 }
 
 func (a *App) StopServer() {
@@ -255,7 +223,7 @@ func (a *App) StopServer() {
 		didShutdown := false
 		for a.Srv.didFinishListen != nil && !didShutdown {
 			if err := a.Srv.Server.Shutdown(ctx); err != nil {
-				l4g.Warn(err.Error())
+				mlog.Warn(err.Error())
 			}
 			timer := time.NewTimer(time.Millisecond * 50)
 			select {

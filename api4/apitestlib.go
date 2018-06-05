@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -18,13 +19,14 @@ import (
 	"testing"
 	"time"
 
-	l4g "github.com/alecthomas/log4go"
 	"github.com/mattermost/mattermost-server/app"
+	"github.com/mattermost/mattermost-server/mlog"
 	"github.com/mattermost/mattermost-server/model"
 	"github.com/mattermost/mattermost-server/store"
 	"github.com/mattermost/mattermost-server/store/sqlstore"
 	"github.com/mattermost/mattermost-server/store/storetest"
 	"github.com/mattermost/mattermost-server/utils"
+	"github.com/mattermost/mattermost-server/web"
 	"github.com/mattermost/mattermost-server/wsapi"
 
 	s3 "github.com/minio/minio-go"
@@ -118,9 +120,12 @@ func setupTestHelper(enterprise bool) *TestHelper {
 	}
 
 	th.App.UpdateConfig(func(cfg *model.Config) { *cfg.ServiceSettings.ListenAddress = prevListenAddress })
-	Init(th.App, th.App.Srv.Router, true)
+	Init(th.App, th.App.Srv.Router)
+	web.NewWeb(th.App, th.App.Srv.Router)
 	wsapi.Init(th.App, th.App.Srv.WebSocketRouter)
 	th.App.Srv.Store.MarkSystemRanUnitTests()
+	th.App.DoAdvancedPermissionsMigration()
+	th.App.DoEmojisPermissionsMigration()
 
 	th.App.UpdateConfig(func(cfg *model.Config) { *cfg.TeamSettings.EnableOpenServer = true })
 
@@ -154,13 +159,13 @@ func (me *TestHelper) TearDown() {
 		options := map[string]bool{}
 		options[store.USER_SEARCH_OPTION_NAMES_ONLY_NO_FULL_NAME] = true
 		if result := <-me.App.Srv.Store.User().Search("", "fakeuser", options); result.Err != nil {
-			l4g.Error("Error tearing down test users")
+			mlog.Error("Error tearing down test users")
 		} else {
 			users := result.Data.([]*model.User)
 
 			for _, u := range users {
 				if err := me.App.PermanentDeleteUser(u); err != nil {
-					l4g.Error(err.Error())
+					mlog.Error(err.Error())
 				}
 			}
 		}
@@ -169,13 +174,13 @@ func (me *TestHelper) TearDown() {
 	go func() {
 		defer wg.Done()
 		if result := <-me.App.Srv.Store.Team().SearchByName("faketeam"); result.Err != nil {
-			l4g.Error("Error tearing down test teams")
+			mlog.Error("Error tearing down test teams")
 		} else {
 			teams := result.Data.([]*model.Team)
 
 			for _, t := range teams {
 				if err := me.App.PermanentDeleteTeam(t); err != nil {
-					l4g.Error(err.Error())
+					mlog.Error(err.Error())
 				}
 			}
 		}
@@ -184,7 +189,7 @@ func (me *TestHelper) TearDown() {
 	go func() {
 		defer wg.Done()
 		if result := <-me.App.Srv.Store.OAuth().GetApps(0, 1000); result.Err != nil {
-			l4g.Error("Error tearing down test oauth apps")
+			mlog.Error("Error tearing down test oauth apps")
 		} else {
 			apps := result.Data.([]*model.OAuthApp)
 
@@ -302,7 +307,11 @@ func (me *TestHelper) CreateUserWithClient(client *model.Client4) *model.User {
 	}
 
 	utils.DisableDebugLogForTest()
-	ruser, _ := client.CreateUser(user)
+	ruser, response := client.CreateUser(user)
+	if response.Error != nil {
+		panic(response.Error)
+	}
+
 	ruser.Password = "Password1"
 	store.Must(me.App.Srv.Store.User().VerifyEmail(ruser.Id))
 	utils.EnableDebugLogForTest()
@@ -444,8 +453,8 @@ func (me *TestHelper) UpdateActiveUser(user *model.User, active bool) {
 
 	_, err := me.App.UpdateActive(user, active)
 	if err != nil {
-		l4g.Error(err.Error())
-		l4g.Close()
+		mlog.Error(err.Error())
+
 		time.Sleep(time.Second)
 		panic(err)
 	}
@@ -458,13 +467,29 @@ func (me *TestHelper) LinkUserToTeam(user *model.User, team *model.Team) {
 
 	err := me.App.JoinUserToTeam(team, user, "")
 	if err != nil {
-		l4g.Error(err.Error())
-		l4g.Close()
+		mlog.Error(err.Error())
+
 		time.Sleep(time.Second)
 		panic(err)
 	}
 
 	utils.EnableDebugLogForTest()
+}
+
+func (me *TestHelper) AddUserToChannel(user *model.User, channel *model.Channel) *model.ChannelMember {
+	utils.DisableDebugLogForTest()
+
+	member, err := me.App.AddUserToChannel(user, channel)
+	if err != nil {
+		mlog.Error(err.Error())
+
+		time.Sleep(time.Second)
+		panic(err)
+	}
+
+	utils.EnableDebugLogForTest()
+
+	return member
 }
 
 func (me *TestHelper) GenerateTestEmail() string {
@@ -507,18 +532,6 @@ func CheckUserSanitization(t *testing.T, user *model.User) {
 
 	if user.MfaSecret != "" {
 		t.Fatal("mfa secret wasn't blank")
-	}
-}
-
-func CheckTeamSanitization(t *testing.T, team *model.Team) {
-	t.Helper()
-
-	if team.Email != "" {
-		t.Fatal("email wasn't blank")
-	}
-
-	if team.AllowedDomains != "" {
-		t.Fatal("'allowed domains' wasn't blank")
 	}
 }
 
@@ -669,24 +682,9 @@ func CheckInternalErrorStatus(t *testing.T, resp *model.Response) {
 	}
 }
 
-func CheckPayLoadTooLargeStatus(t *testing.T, resp *model.Response) {
-	t.Helper()
-
-	if resp.Error == nil {
-		t.Fatal("should have errored with status:" + strconv.Itoa(http.StatusRequestEntityTooLarge))
-		return
-	}
-
-	if resp.StatusCode != http.StatusRequestEntityTooLarge {
-		t.Log("actual: " + strconv.Itoa(resp.StatusCode))
-		t.Log("expected: " + strconv.Itoa(http.StatusRequestEntityTooLarge))
-		t.Fatal("wrong status code")
-	}
-}
-
 func readTestFile(name string) ([]byte, error) {
 	path, _ := utils.FindDir("tests")
-	file, err := os.Open(path + "/" + name)
+	file, err := os.Open(filepath.Join(path, name))
 	if err != nil {
 		return nil, err
 	}
@@ -770,7 +768,7 @@ func (me *TestHelper) MakeUserChannelAdmin(user *model.User, channel *model.Chan
 
 	if cmr := <-me.App.Srv.Store.Channel().GetMember(channel.Id, user.Id); cmr.Err == nil {
 		cm := cmr.Data.(*model.ChannelMember)
-		cm.Roles = "channel_admin channel_user"
+		cm.SchemeAdmin = true
 		if sr := <-me.App.Srv.Store.Channel().UpdateMember(cm); sr.Err != nil {
 			utils.EnableDebugLogForTest()
 			panic(sr.Err)
@@ -786,27 +784,152 @@ func (me *TestHelper) MakeUserChannelAdmin(user *model.User, channel *model.Chan
 func (me *TestHelper) UpdateUserToTeamAdmin(user *model.User, team *model.Team) {
 	utils.DisableDebugLogForTest()
 
-	tm := &model.TeamMember{TeamId: team.Id, UserId: user.Id, Roles: model.TEAM_USER_ROLE_ID + " " + model.TEAM_ADMIN_ROLE_ID}
-	if tmr := <-me.App.Srv.Store.Team().UpdateMember(tm); tmr.Err != nil {
+	if tmr := <-me.App.Srv.Store.Team().GetMember(team.Id, user.Id); tmr.Err == nil {
+		tm := tmr.Data.(*model.TeamMember)
+		tm.SchemeAdmin = true
+		if sr := <-me.App.Srv.Store.Team().UpdateMember(tm); sr.Err != nil {
+			utils.EnableDebugLogForTest()
+			panic(sr.Err)
+		}
+	} else {
 		utils.EnableDebugLogForTest()
-		l4g.Error(tmr.Err.Error())
-		l4g.Close()
+		mlog.Error(tmr.Err.Error())
+
 		time.Sleep(time.Second)
 		panic(tmr.Err)
 	}
+
 	utils.EnableDebugLogForTest()
 }
 
 func (me *TestHelper) UpdateUserToNonTeamAdmin(user *model.User, team *model.Team) {
 	utils.DisableDebugLogForTest()
 
-	tm := &model.TeamMember{TeamId: team.Id, UserId: user.Id, Roles: model.TEAM_USER_ROLE_ID}
-	if tmr := <-me.App.Srv.Store.Team().UpdateMember(tm); tmr.Err != nil {
+	if tmr := <-me.App.Srv.Store.Team().GetMember(team.Id, user.Id); tmr.Err == nil {
+		tm := tmr.Data.(*model.TeamMember)
+		tm.SchemeAdmin = false
+		if sr := <-me.App.Srv.Store.Team().UpdateMember(tm); sr.Err != nil {
+			utils.EnableDebugLogForTest()
+			panic(sr.Err)
+		}
+	} else {
 		utils.EnableDebugLogForTest()
-		l4g.Error(tmr.Err.Error())
-		l4g.Close()
+		mlog.Error(tmr.Err.Error())
+
 		time.Sleep(time.Second)
 		panic(tmr.Err)
 	}
+
+	utils.EnableDebugLogForTest()
+}
+
+func (me *TestHelper) SaveDefaultRolePermissions() map[string][]string {
+	utils.DisableDebugLogForTest()
+
+	results := make(map[string][]string)
+
+	for _, roleName := range []string{
+		"system_user",
+		"system_admin",
+		"team_user",
+		"team_admin",
+		"channel_user",
+		"channel_admin",
+	} {
+		role, err1 := me.App.GetRoleByName(roleName)
+		if err1 != nil {
+			utils.EnableDebugLogForTest()
+			panic(err1)
+		}
+
+		results[roleName] = role.Permissions
+	}
+
+	utils.EnableDebugLogForTest()
+	return results
+}
+
+func (me *TestHelper) RestoreDefaultRolePermissions(data map[string][]string) {
+	utils.DisableDebugLogForTest()
+
+	for roleName, permissions := range data {
+		role, err1 := me.App.GetRoleByName(roleName)
+		if err1 != nil {
+			utils.EnableDebugLogForTest()
+			panic(err1)
+		}
+
+		if strings.Join(role.Permissions, " ") == strings.Join(permissions, " ") {
+			continue
+		}
+
+		role.Permissions = permissions
+
+		_, err2 := me.App.UpdateRole(role)
+		if err2 != nil {
+			utils.EnableDebugLogForTest()
+			panic(err2)
+		}
+	}
+
+	utils.EnableDebugLogForTest()
+}
+
+func (me *TestHelper) RemovePermissionFromRole(permission string, roleName string) {
+	utils.DisableDebugLogForTest()
+
+	role, err1 := me.App.GetRoleByName(roleName)
+	if err1 != nil {
+		utils.EnableDebugLogForTest()
+		panic(err1)
+	}
+
+	var newPermissions []string
+	for _, p := range role.Permissions {
+		if p != permission {
+			newPermissions = append(newPermissions, p)
+		}
+	}
+
+	if strings.Join(role.Permissions, " ") == strings.Join(newPermissions, " ") {
+		utils.EnableDebugLogForTest()
+		return
+	}
+
+	role.Permissions = newPermissions
+
+	_, err2 := me.App.UpdateRole(role)
+	if err2 != nil {
+		utils.EnableDebugLogForTest()
+		panic(err2)
+	}
+
+	utils.EnableDebugLogForTest()
+}
+
+func (me *TestHelper) AddPermissionToRole(permission string, roleName string) {
+	utils.DisableDebugLogForTest()
+
+	role, err1 := me.App.GetRoleByName(roleName)
+	if err1 != nil {
+		utils.EnableDebugLogForTest()
+		panic(err1)
+	}
+
+	for _, existingPermission := range role.Permissions {
+		if existingPermission == permission {
+			utils.EnableDebugLogForTest()
+			return
+		}
+	}
+
+	role.Permissions = append(role.Permissions, permission)
+
+	_, err2 := me.App.UpdateRole(role)
+	if err2 != nil {
+		utils.EnableDebugLogForTest()
+		panic(err2)
+	}
+
 	utils.EnableDebugLogForTest()
 }

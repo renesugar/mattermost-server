@@ -4,13 +4,14 @@
 package app
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
 	"strings"
 	"unicode/utf8"
 
-	l4g "github.com/alecthomas/log4go"
+	"github.com/mattermost/mattermost-server/mlog"
 	"github.com/mattermost/mattermost-server/model"
 	"github.com/mattermost/mattermost-server/store"
 	"github.com/mattermost/mattermost-server/utils"
@@ -107,7 +108,7 @@ func (a *App) TriggerWebhook(payload *model.OutgoingWebhookPayload, hook *model.
 				req.Header.Set("Content-Type", contentType)
 				req.Header.Set("Accept", "application/json")
 				if resp, err := a.HTTPClient(false).Do(req); err != nil {
-					l4g.Error(utils.T("api.post.handle_webhook_events_and_forget.event_post.error"), err.Error())
+					mlog.Error(fmt.Sprintf("Event POST failed, err=%s", err.Error()))
 				} else {
 					defer consumeAndClose(resp)
 
@@ -134,7 +135,7 @@ func (a *App) TriggerWebhook(payload *model.OutgoingWebhookPayload, hook *model.
 						}
 
 						if _, err := a.CreateWebhookPost(hook.CreatorId, channel, text, webhookResp.Username, webhookResp.IconURL, webhookResp.Props, webhookResp.Type, postRootId); err != nil {
-							l4g.Error(utils.T("api.post.handle_webhook_events_and_forget.create_post.error"), err)
+							mlog.Error(fmt.Sprintf("Failed to create response post, err=%v", err))
 						}
 					}
 				}
@@ -143,7 +144,7 @@ func (a *App) TriggerWebhook(payload *model.OutgoingWebhookPayload, hook *model.
 	}
 }
 
-func SplitWebhookPost(post *model.Post) ([]*model.Post, *model.AppError) {
+func SplitWebhookPost(post *model.Post, maxPostSize int) ([]*model.Post, *model.AppError) {
 	splits := make([]*model.Post, 0)
 	remainingText := post.Message
 
@@ -159,12 +160,12 @@ func SplitWebhookPost(post *model.Post) ([]*model.Post, *model.AppError) {
 		return nil, model.NewAppError("SplitWebhookPost", "web.incoming_webhook.split_props_length.app_error", map[string]interface{}{"Max": model.POST_PROPS_MAX_USER_RUNES}, "", http.StatusBadRequest)
 	}
 
-	for utf8.RuneCountInString(remainingText) > model.POST_MESSAGE_MAX_RUNES {
+	for utf8.RuneCountInString(remainingText) > maxPostSize {
 		split := base
 		x := 0
 		for index := range remainingText {
 			x++
-			if x > model.POST_MESSAGE_MAX_RUNES {
+			if x > maxPostSize {
 				split.Message = remainingText[:index]
 				remainingText = remainingText[index:]
 				break
@@ -225,7 +226,7 @@ func SplitWebhookPost(post *model.Post) ([]*model.Post, *model.AppError) {
 
 func (a *App) CreateWebhookPost(userId string, channel *model.Channel, text, overrideUsername, overrideIconUrl string, props model.StringInterface, postType string, postRootId string) (*model.Post, *model.AppError) {
 	// parse links into Markdown format
-	linkWithTextRegex := regexp.MustCompile(`<([^<\|]+)\|([^>]+)>`)
+	linkWithTextRegex := regexp.MustCompile(`<([^\n<\|>]+)\|([^\n>]+)>`)
 	text = linkWithTextRegex.ReplaceAllString(text, "[${2}](${1})")
 
 	post := &model.Post{UserId: userId, ChannelId: channel.Id, Message: text, Type: postType, RootId: postRootId}
@@ -266,7 +267,7 @@ func (a *App) CreateWebhookPost(userId string, channel *model.Channel, text, ove
 		}
 	}
 
-	splits, err := SplitWebhookPost(post)
+	splits, err := SplitWebhookPost(post, a.MaxPostSize())
 	if err != nil {
 		return nil, err
 	}
@@ -630,6 +631,10 @@ func (a *App) HandleIncomingWebhook(hookId string, req *model.IncomingWebhookReq
 		} else {
 			channel = result.Data.(*model.Channel)
 		}
+	}
+
+	if hook.ChannelLocked && hook.ChannelId != channel.Id {
+		return model.NewAppError("HandleIncomingWebhook", "web.incoming_webhook.channel_locked.app_error", nil, "", http.StatusForbidden)
 	}
 
 	if a.License() != nil && *a.Config().TeamSettings.ExperimentalTownSquareIsReadOnly &&

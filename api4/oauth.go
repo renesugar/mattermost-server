@@ -6,10 +6,11 @@ package api4
 import (
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 
-	l4g "github.com/alecthomas/log4go"
 	"github.com/mattermost/mattermost-server/app"
+	"github.com/mattermost/mattermost-server/mlog"
 	"github.com/mattermost/mattermost-server/model"
 	"github.com/mattermost/mattermost-server/utils"
 )
@@ -375,7 +376,7 @@ func authorizeOAuthPage(c *Context, w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache, max-age=31556926, public")
 
 	staticDir, _ := utils.FindDir(model.CLIENT_DIR)
-	http.ServeFile(w, r, staticDir+"root.html")
+	http.ServeFile(w, r, filepath.Join(staticDir, "root.html"))
 }
 
 func getAccessToken(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -462,7 +463,7 @@ func completeOAuth(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		err.Translate(c.T)
-		l4g.Error(err.Error())
+		mlog.Error(err.Error())
 		if action == model.OAUTH_ACTION_MOBILE {
 			w.Write([]byte(err.ToJson()))
 		} else {
@@ -474,7 +475,7 @@ func completeOAuth(c *Context, w http.ResponseWriter, r *http.Request) {
 	user, err := c.App.CompleteOAuth(service, body, teamId, props)
 	if err != nil {
 		err.Translate(c.T)
-		l4g.Error(err.Error())
+		mlog.Error(err.Error())
 		if action == model.OAUTH_ACTION_MOBILE {
 			w.Write([]byte(err.ToJson()))
 		} else {
@@ -562,7 +563,7 @@ func signupWithOAuth(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.App.Config().TeamSettings.EnableUserCreation {
+	if !*c.App.Config().TeamSettings.EnableUserCreation {
 		utils.RenderWebError(w, r, http.StatusBadRequest, url.Values{
 			"message": []string{utils.T("api.oauth.singup_with_oauth.disabled.app_error")},
 		}, c.App.AsymmetricSigningKey())

@@ -13,15 +13,6 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-const (
-	PLUGIN_CONFIG_TYPE_TEXT      = "text"
-	PLUGIN_CONFIG_TYPE_BOOL      = "bool"
-	PLUGIN_CONFIG_TYPE_RADIO     = "radio"
-	PLUGIN_CONFIG_TYPE_DROPDOWN  = "dropdown"
-	PLUGIN_CONFIG_TYPE_GENERATED = "generated"
-	PLUGIN_CONFIG_TYPE_USERNAME  = "username"
-)
-
 type PluginOption struct {
 	// The display name for the option.
 	DisplayName string `json:"display_name" yaml:"display_name"`
@@ -102,9 +93,9 @@ type PluginSettingsSchema struct {
 //               help_text: When true, an extra thing will be enabled!
 //               default: false
 type Manifest struct {
-	// The id is a globally unique identifier that represents your plugin. Ids are limited
-	// to 190 characters. Reverse-DNS notation using a name you control is a good option.
-	// For example, "com.mycompany.myplugin".
+	// The id is a globally unique identifier that represents your plugin. Ids must be at least
+	// 3 characters, at most 190 characters and must match ^[a-zA-Z0-9-_\.]+$.
+	// Reverse-DNS notation using a name you control is a good option, e.g. "com.mycompany.myplugin".
 	Id string `json:"id" yaml:"id"`
 
 	// The name to be displayed for the plugin.
@@ -173,6 +164,11 @@ func (m *Manifest) ClientManifest() *Manifest {
 	cm.Name = ""
 	cm.Description = ""
 	cm.Backend = nil
+	if cm.Webapp != nil {
+		cm.Webapp = new(ManifestWebapp)
+		*cm.Webapp = *m.Webapp
+		cm.Webapp.BundlePath = "/static/" + m.Id + "_bundle.js"
+	}
 	return cm
 }
 

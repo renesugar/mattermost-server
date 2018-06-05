@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"time"
 
-	l4g "github.com/alecthomas/log4go"
 	"github.com/mattermost/mattermost-server/app"
+	"github.com/mattermost/mattermost-server/mlog"
 	"github.com/mattermost/mattermost-server/model"
 	"github.com/mattermost/mattermost-server/store"
 )
@@ -73,15 +73,15 @@ func createUser(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash := r.URL.Query().Get("h")
+	tokenId := r.URL.Query().Get("t")
 	inviteId := r.URL.Query().Get("iid")
 
 	// No permission check required
 
 	var ruser *model.User
 	var err *model.AppError
-	if len(hash) > 0 {
-		ruser, err = c.App.CreateUserWithHash(user, hash, r.URL.Query().Get("d"))
+	if len(tokenId) > 0 {
+		ruser, err = c.App.CreateUserWithToken(user, tokenId)
 	} else if len(inviteId) > 0 {
 		ruser, err = c.App.CreateUserWithInviteId(user, inviteId)
 	} else if c.IsSystemAdmin() {
@@ -199,7 +199,8 @@ func getProfileImage(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	} else {
 		if len(users) == 0 {
-			c.Err = err
+			c.Err = model.NewAppError("getProfileImage", "api.user.get_profile_image.not_found.app_error", nil, "", http.StatusNotFound)
+			return
 		}
 
 		user := users[0]
@@ -290,13 +291,18 @@ func getUsers(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if sort != "" && sort != "last_activity_at" && sort != "create_at" {
+	if sort != "" && sort != "last_activity_at" && sort != "create_at" && sort != "status" {
 		c.SetInvalidUrlParam("sort")
 		return
 	}
 
 	// Currently only supports sorting on a team
+	// or sort="status" on inChannelId
 	if (sort == "last_activity_at" || sort == "create_at") && (inTeamId == "" || notInTeamId != "" || inChannelId != "" || notInChannelId != "" || withoutTeam != "") {
+		c.SetInvalidUrlParam("sort")
+		return
+	}
+	if sort == "status" && inChannelId == "" {
 		c.SetInvalidUrlParam("sort")
 		return
 	}
@@ -355,8 +361,11 @@ func getUsers(c *Context, w http.ResponseWriter, r *http.Request) {
 			c.SetPermissionError(model.PERMISSION_READ_CHANNEL)
 			return
 		}
-
-		profiles, err = c.App.GetUsersInChannelPage(inChannelId, c.Params.Page, c.Params.PerPage, c.IsSystemAdmin())
+		if sort == "status" {
+			profiles, err = c.App.GetUsersInChannelPageByStatus(inChannelId, c.Params.Page, c.Params.PerPage, c.IsSystemAdmin())
+		} else {
+			profiles, err = c.App.GetUsersInChannelPage(inChannelId, c.Params.Page, c.Params.PerPage, c.IsSystemAdmin())
+		}
 	} else {
 		// No permission check required
 
@@ -499,7 +508,12 @@ func autocompleteUsers(c *Context, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		result, _ := c.App.AutocompleteUsersInChannel(teamId, channelId, name, searchOptions, c.IsSystemAdmin())
+		result, err := c.App.AutocompleteUsersInChannel(teamId, channelId, name, searchOptions, c.IsSystemAdmin())
+		if err != nil {
+			c.Err = err
+			return
+		}
+
 		autocomplete.Users = result.InChannel
 		autocomplete.OutOfChannel = result.OutOfChannel
 	} else if len(teamId) > 0 {
@@ -508,11 +522,20 @@ func autocompleteUsers(c *Context, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		result, _ := c.App.AutocompleteUsersInTeam(teamId, name, searchOptions, c.IsSystemAdmin())
+		result, err := c.App.AutocompleteUsersInTeam(teamId, name, searchOptions, c.IsSystemAdmin())
+		if err != nil {
+			c.Err = err
+			return
+		}
+
 		autocomplete.Users = result.InTeam
 	} else {
 		// No permission check required
-		result, _ := c.App.SearchUsersInTeam("", name, searchOptions, c.IsSystemAdmin())
+		result, err := c.App.SearchUsersInTeam("", name, searchOptions, c.IsSystemAdmin())
+		if err != nil {
+			c.Err = err
+			return
+		}
 		autocomplete.Users = result
 	}
 
@@ -581,8 +604,13 @@ func patchUser(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ouser, err := c.App.GetUser(c.Params.UserId)
+	if err != nil {
+		c.SetInvalidParam("user_id")
+		return
+	}
+
 	if c.Session.IsOAuth && patch.Email != nil {
-		ouser, err := c.App.GetUser(c.Params.UserId)
 		if err != nil {
 			c.Err = err
 			return
@@ -599,6 +627,7 @@ func patchUser(c *Context, w http.ResponseWriter, r *http.Request) {
 		c.Err = err
 		return
 	} else {
+		c.App.SetAutoResponderStatus(ruser, ouser.NotifyProps)
 		c.LogAudit("")
 		w.Write([]byte(ruser.ToJson()))
 	}
@@ -684,6 +713,12 @@ func updateUserActive(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// if EnableUserDeactivation flag is disabled the user cannot deactivate himself.
+	if isSelfDeactive && !*c.App.GetConfig().TeamSettings.EnableUserDeactivation {
+		c.Err = model.NewAppError("updateUserActive", "api.user.update_active.not_enable.app_error", nil, "userId="+c.Params.UserId, http.StatusUnauthorized)
+		return
+	}
+
 	var user *model.User
 	var err *model.AppError
 
@@ -696,6 +731,13 @@ func updateUserActive(c *Context, w http.ResponseWriter, r *http.Request) {
 		c.Err = err
 	} else {
 		c.LogAuditWithUserId(user.Id, fmt.Sprintf("active=%v", active))
+		if isSelfDeactive {
+			c.App.Go(func() {
+				if err = c.App.SendDeactivateAccountEmail(user.Email, user.Locale, c.App.GetSiteURL()); err != nil {
+					mlog.Error(err.Error())
+				}
+			})
+		}
 		ReturnStatusOK(w)
 	}
 }
@@ -742,7 +784,9 @@ func checkUserMfa(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if user, err := c.App.GetUserForLogin(loginId, false); err == nil {
+	if *c.App.Config().ServiceSettings.ExperimentalEnableHardenedMode {
+		resp["mfa_required"] = true
+	} else if user, err := c.App.GetUserForLogin("", loginId); err == nil {
 		resp["mfa_required"] = user.MfaActive
 	}
 
@@ -894,7 +938,11 @@ func sendPasswordReset(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	if sent, err := c.App.SendPasswordReset(email, c.App.GetSiteURL()); err != nil {
-		c.Err = err
+		if *c.App.Config().ServiceSettings.ExperimentalEnableHardenedMode {
+			ReturnStatusOK(w)
+		} else {
+			c.Err = err
+		}
 		return
 	} else if sent {
 		c.LogAudit("sent=" + email)
@@ -904,6 +952,13 @@ func sendPasswordReset(c *Context, w http.ResponseWriter, r *http.Request) {
 }
 
 func login(c *Context, w http.ResponseWriter, r *http.Request) {
+	// For hardened mode, translate all login errors to generic.
+	defer func() {
+		if *c.App.Config().ServiceSettings.ExperimentalEnableHardenedMode && c.Err != nil {
+			c.Err = model.NewAppError("login", "api.user.login.invalid_credentials", nil, "", http.StatusUnauthorized)
+		}
+	}()
+
 	props := model.MapFromJson(r.Body)
 
 	id := props["id"]
@@ -914,7 +969,7 @@ func login(c *Context, w http.ResponseWriter, r *http.Request) {
 	ldapOnly := props["ldap_only"] == "true"
 
 	c.LogAuditWithUserId(id, "attempt - login_id="+loginId)
-	user, err := c.App.AuthenticateUserForLogin(id, loginId, password, mfaToken, deviceId, ldapOnly)
+	user, err := c.App.AuthenticateUserForLogin(id, loginId, password, mfaToken, ldapOnly)
 	if err != nil {
 		c.LogAuditWithUserId(id, "failure - login_id="+loginId)
 		c.Err = err
@@ -940,11 +995,7 @@ func login(c *Context, w http.ResponseWriter, r *http.Request) {
 }
 
 func logout(c *Context, w http.ResponseWriter, r *http.Request) {
-	data := make(map[string]string)
-	data["user_id"] = c.Session.UserId
-
 	Logout(c, w, r)
-
 }
 
 func Logout(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -1138,7 +1189,7 @@ func sendVerificationEmail(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := c.App.GetUserForLogin(email, false)
+	user, err := c.App.GetUserForLogin("", email)
 	if err != nil {
 		// Don't want to leak whether the email is valid or not
 		ReturnStatusOK(w)
@@ -1148,7 +1199,7 @@ func sendVerificationEmail(c *Context, w http.ResponseWriter, r *http.Request) {
 	err = c.App.SendEmailVerification(user)
 	if err != nil {
 		// Don't want to leak whether the email is valid or not
-		l4g.Error(err.Error())
+		mlog.Error(err.Error())
 		ReturnStatusOK(w)
 		return
 	}
@@ -1176,7 +1227,7 @@ func switchAccountType(c *Context, w http.ResponseWriter, r *http.Request) {
 
 		link, err = c.App.SwitchOAuthToEmail(switchRequest.Email, switchRequest.NewPassword, c.Session.UserId)
 	} else if switchRequest.EmailToLdap() {
-		link, err = c.App.SwitchEmailToLdap(switchRequest.Email, switchRequest.Password, switchRequest.MfaCode, switchRequest.LdapId, switchRequest.NewPassword)
+		link, err = c.App.SwitchEmailToLdap(switchRequest.Email, switchRequest.Password, switchRequest.MfaCode, switchRequest.LdapLoginId, switchRequest.NewPassword)
 	} else if switchRequest.LdapToEmail() {
 		link, err = c.App.SwitchLdapToEmail(switchRequest.Password, switchRequest.MfaCode, switchRequest.Email, switchRequest.NewPassword)
 	} else {

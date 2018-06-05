@@ -108,6 +108,18 @@
     "translation": "Mattermost - 测试邮箱设置"
   },
   {
+    "id": "api.admin.test_s3.missing_s3_bucket",
+    "translation": "必须填写 S3 储存桶"
+  },
+  {
+    "id": "api.admin.test_s3.missing_s3_endpoint",
+    "translation": "必须填写 S3 Endpoint"
+  },
+  {
+    "id": "api.admin.test_s3.missing_s3_region",
+    "translation": "必须填写 S3 区域"
+  },
+  {
     "id": "api.admin.upload_brand_image.array.app_error",
     "translation": "请求中图片为空"
   },
@@ -202,6 +214,14 @@
   {
     "id": "api.channel.change_channel_privacy.public_to_private",
     "translation": "此频道已转换到私有频道。"
+  },
+  {
+    "id": "api.channel.convert_channel_to_private.default_channel_error",
+    "translation": "默认频道无法转换成私有频道。"
+  },
+  {
+    "id": "api.channel.convert_channel_to_private.private_channel_error",
+    "translation": "请求转换的频道已经是私有频道。"
   },
   {
     "id": "api.channel.create_channel.direct_channel.app_error",
@@ -392,8 +412,24 @@
     "translation": "对默认频道试图执行一个无效的更新 {{.Channel}}"
   },
   {
+    "id": "api.channel.update_channel_member_roles.scheme_role.app_error",
+    "translation": "The provided role is managed by a Scheme and therefore cannot be applied directly to a Channel Member"
+  },
+  {
+    "id": "api.channel.update_channel_scheme.license.error",
+    "translation": "许可证不支持更新团队方案"
+  },
+  {
+    "id": "api.channel.update_channel_scheme.scheme_scope.error",
+    "translation": "无法设定频道方案因为提供的方案不是频道方案。"
+  },
+  {
     "id": "api.channel.update_last_viewed_at.get_unread_count_for_channel.error",
     "translation": "无法获取未读数量：user_id=%v, channel_id=%v, err=%v"
+  },
+  {
+    "id": "api.channel.update_team_member_roles.scheme_role.app_error",
+    "translation": "The provided role is managed by a Scheme and therefore cannot be applied directly to a Team Member"
   },
   {
     "id": "api.cluster.init.debug",
@@ -665,7 +701,7 @@
   },
   {
     "id": "api.command_echo.delay.app_error",
-    "translation": "延迟必须在10000秒内"
+    "translation": "延迟必须在 10000 秒内"
   },
   {
     "id": "api.command_echo.desc",
@@ -763,6 +799,58 @@
     "translation": "帮助"
   },
   {
+    "id": "api.command_invite.channel.app_error",
+    "translation": "获取当前频道错误。"
+  },
+  {
+    "id": "api.command_invite.channel.error",
+    "translation": "无法找到频道 {{.Channel}}。请使用[频道识别](https://about.mattermost.com/default-channel-handle-documentation)  以分辨频道。"
+  },
+  {
+    "id": "api.command_invite.desc",
+    "translation": "邀请用户到频道"
+  },
+  {
+    "id": "api.command_invite.directchannel.app_error",
+    "translation": "您不能添加成员到私信频道。"
+  },
+  {
+    "id": "api.command_invite.fail.app_error",
+    "translation": "加入频道时发生错误。"
+  },
+  {
+    "id": "api.command_invite.hint",
+    "translation": "@[用户名] ~[频道]"
+  },
+  {
+    "id": "api.command_invite.missing_message.app_error",
+    "translation": "缺少用户名和频道。"
+  },
+  {
+    "id": "api.command_invite.missing_user.app_error",
+    "translation": "无法找到该用户。"
+  },
+  {
+    "id": "api.command_invite.name",
+    "translation": "邀请"
+  },
+  {
+    "id": "api.command_invite.permission.app_error",
+    "translation": "您没有足够的权限在 {{.Channel}} 添加 {{.User}}。"
+  },
+  {
+    "id": "api.command_invite.private_channel.app_error",
+    "translation": "无法找到频道 {{.Channel}}。请使用频道识别查找频道。"
+  },
+  {
+    "id": "api.command_invite.success",
+    "translation": "已添加 {{.User}} 到 {{.Channel}} 频道。"
+  },
+  {
+    "id": "api.command_invite.user_already_in_channel.app_error",
+    "translation": "{{.User}} 已在频道。"
+  },
+  {
     "id": "api.command_join.desc",
     "translation": "添加到公开频道"
   },
@@ -772,7 +860,7 @@
   },
   {
     "id": "api.command_join.hint",
-    "translation": "[频道名称]"
+    "translation": "~[频道]"
   },
   {
     "id": "api.command_join.list.app_error",
@@ -873,6 +961,46 @@
   {
     "id": "api.command_msg.success",
     "translation": "消息已发送给用户。"
+  },
+  {
+    "id": "api.command_mute.desc",
+    "translation": "关闭当前频道或指定[频道]的桌面、邮件以及推送通知。"
+  },
+  {
+    "id": "api.command_mute.error",
+    "translation": "无法找到频道 {{.Channel}}。请使用[频道识别](https://about.mattermost.com/default-channel-handle-documentation)  以分辨频道。"
+  },
+  {
+    "id": "api.command_mute.hint",
+    "translation": "~[频道]"
+  },
+  {
+    "id": "api.command_mute.name",
+    "translation": "静音"
+  },
+  {
+    "id": "api.command_mute.no_channel.error",
+    "translation": "无法找到指定的频道。请使用[频道识别](https://about.mattermost.com/default-channel-handle-documentation)  以分辨频道。"
+  },
+  {
+    "id": "api.command_mute.not_member.error",
+    "translation": "无法静音频道 {{.Channel}} 因为您不是成员。"
+  },
+  {
+    "id": "api.command_mute.success_mute",
+    "translation": "您将不会收到 {{.Channel}} 的通知直到取消频道静音。"
+  },
+  {
+    "id": "api.command_mute.success_mute_direct_msg",
+    "translation": "您将不会收到此频道的通知直到取消频道静音。"
+  },
+  {
+    "id": "api.command_mute.success_unmute",
+    "translation": "{{.Channel}} 不再被静音。"
+  },
+  {
+    "id": "api.command_mute.success_unmute_direct_msg",
+    "translation": "此频道不再被静音。"
   },
   {
     "id": "api.command_offline.desc",
@@ -1161,10 +1289,6 @@
     "translation": "无法删除表情符 %v 时删除互动"
   },
   {
-    "id": "api.emoji.delete.permissions.app_error",
-    "translation": "无效删除表情符权限。"
-  },
-  {
     "id": "api.emoji.disabled.app_error",
     "translation": "自定义表情符号已被系统管理员禁用。"
   },
@@ -1367,6 +1491,10 @@
   {
     "id": "api.file.upload_file.bad_parse.app_error",
     "translation": "无法上传文件。标题无法被解析。"
+  },
+  {
+    "id": "api.file.upload_file.incorrect_number_of_files.app_error",
+    "translation": "无法上传文件。指定的文件数不匹配。"
   },
   {
     "id": "api.file.upload_file.large_image.app_error",
@@ -1637,20 +1765,12 @@
     "translation": "multipart/form 请求缺少文件"
   },
   {
-    "id": "api.post.check_for_out_of_channel_mentions.link.private",
-    "translation": "添加他们到此私有频道"
-  },
-  {
-    "id": "api.post.check_for_out_of_channel_mentions.link.public",
-    "translation": "添加他们到频道"
-  },
-  {
     "id": "api.post.check_for_out_of_channel_mentions.message.multiple",
-    "translation": "@{{.Usernames}} 以及 @{{.LastUsername}} 被提及到但他们并不在频道里。您想要{{.Phrase}}吗？他们将可以访问所有消息历史。"
+    "translation": "@{{.Usernames}} 与 @{{.LastUsername}} 被提到了，但是他们因不在这个频道而不会收到通知。"
   },
   {
     "id": "api.post.check_for_out_of_channel_mentions.message.one",
-    "translation": "@{{.Usernames}} 被提及到但他们并不在频道里。您想要{{.Phrase}}吗？他们将可以访问所有消息历史。"
+    "translation": "@{{.Username}} 被提到了，但是他因不在此频道而不会收到通知。"
   },
   {
     "id": "api.post.create_post.attach_files.error",
@@ -1787,6 +1907,18 @@
     "translation": "无法获取频道成员个人资料，user_id=%v"
   },
   {
+    "id": "api.post.send_notification_and_forget.push_channel_mention",
+    "translation": " 通知了频道。"
+  },
+  {
+    "id": "api.post.send_notification_and_forget.push_comment_on_post",
+    "translation": " commented on your post."
+  },
+  {
+    "id": "api.post.send_notification_and_forget.push_comment_on_thread",
+    "translation": " commented on a thread you participated in."
+  },
+  {
     "id": "api.post.send_notifications.user_id.debug",
     "translation": "消息创建者不在频道中，未发送推送 post_id=%v channel_id=%v user_id=%v"
   },
@@ -1807,36 +1939,20 @@
     "translation": "新的提及"
   },
   {
+    "id": "api.post.send_notifications_and_forget.push_explicit_mention",
+    "translation": " 提及了您。"
+  },
+  {
+    "id": "api.post.send_notifications_and_forget.push_general_message",
+    "translation": " 发布了消息。"
+  },
+  {
     "id": "api.post.send_notifications_and_forget.push_image_only",
-    "translation": " 已上传一个或更多个文件在 "
-  },
-  {
-    "id": "api.post.send_notifications_and_forget.push_image_only_dm",
-    "translation": " 在私信里上传一个或更多个文件"
-  },
-  {
-    "id": "api.post.send_notifications_and_forget.push_in",
-    "translation": " 在 "
-  },
-  {
-    "id": "api.post.send_notifications_and_forget.push_mention",
-    "translation": " 提到你在 "
-  },
-  {
-    "id": "api.post.send_notifications_and_forget.push_mention_no_channel",
-    "translation": " 提及您 "
+    "translation": " 附加了文件。"
   },
   {
     "id": "api.post.send_notifications_and_forget.push_message",
-    "translation": " 发送给你一个私信"
-  },
-  {
-    "id": "api.post.send_notifications_and_forget.push_non_mention",
-    "translation": "发布在"
-  },
-  {
-    "id": "api.post.send_notifications_and_forget.push_non_mention_no_channel",
-    "translation": " 发布消息"
+    "translation": "给您发送了消息。"
   },
   {
     "id": "api.post.send_notifications_and_forget.push_notification.error",
@@ -1927,12 +2043,32 @@
     "translation": "发送 websocket 互动事件时获取消息失败"
   },
   {
+    "id": "api.roles.patch_roles.license.error",
+    "translation": "您当前的授权不支持高级权限。"
+  },
+  {
     "id": "api.saml.save_certificate.app_error",
     "translation": "证书没有正确保存。"
   },
   {
+    "id": "api.scheme.get_channels_for_scheme.scope.error",
+    "translation": "无法获取方案的频道因为提供的方案不是频道方案。"
+  },
+  {
+    "id": "api.scheme.get_teams_for_scheme.scope.error",
+    "translation": "无法获取方案的团队因为提供的方案不是团队方案。"
+  },
+  {
     "id": "api.server.new_server.init.info",
     "translation": "服务正在初始化..."
+  },
+  {
+    "id": "api.server.start_server.forward80to443.disabled_while_using_lets_encrypt",
+    "translation": "使用 LetsEncrypt 时必须开启 Forward80To443"
+  },
+  {
+    "id": "api.server.start_server.forward80to443.enabled_but_listening_on_wrong_port",
+    "translation": "无法在监听端口 %s 时转发端口 80 到端口 443：使用代理服务器时停用 Forward80To443"
   },
   {
     "id": "api.server.start_server.listening.info",
@@ -2148,7 +2284,7 @@
   },
   {
     "id": "api.slackimport.slack_sanitise_channel_properties.name_too_long.warn",
-    "translation": "Slack 导入：频道 {{.ChannelName}} 的 Handle 过长。导入时会被截断。"
+    "translation": "Slack 导入：频道 {{.ChannelName}} 的识别过长。导入时会被截断。"
   },
   {
     "id": "api.slackimport.slack_sanitise_channel_properties.purpose_too_long.warn",
@@ -2300,11 +2436,11 @@
   },
   {
     "id": "api.team.move_channel.post.error",
-    "translation": "发送频道作用消息失败"
+    "translation": "发送频道移动消息失败。"
   },
   {
     "id": "api.team.move_channel.success",
-    "translation": "This channel has been moved to this team from %v."
+    "translation": "此频道已从 %v 移至此团队。"
   },
   {
     "id": "api.team.permanent_delete_team.attempting.warn",
@@ -2315,6 +2451,10 @@
     "translation": "永久删除团队 %v id=%v"
   },
   {
+    "id": "api.team.remove_team_icon.get_team.app_error",
+    "translation": "获取团队时发生错误"
+  },
+  {
     "id": "api.team.remove_user_from_team.missing.app_error",
     "translation": "此用户似乎不属于此团队。"
   },
@@ -2323,8 +2463,56 @@
     "translation": "%v 已移出团队。"
   },
   {
+    "id": "api.team.set_team_icon.array.app_error",
+    "translation": "请求中 'image' 为空"
+  },
+  {
+    "id": "api.team.set_team_icon.decode.app_error",
+    "translation": "无法解码团队图标"
+  },
+  {
+    "id": "api.team.set_team_icon.decode_config.app_error",
+    "translation": "无法解码团队图标元数据"
+  },
+  {
+    "id": "api.team.set_team_icon.encode.app_error",
+    "translation": "无法编码团队图标"
+  },
+  {
+    "id": "api.team.set_team_icon.get_team.app_error",
+    "translation": "获取团队时发生错误"
+  },
+  {
+    "id": "api.team.set_team_icon.no_file.app_error",
+    "translation": "请求中缺失图片文件"
+  },
+  {
+    "id": "api.team.set_team_icon.open.app_error",
+    "translation": "无法打开图像文件"
+  },
+  {
+    "id": "api.team.set_team_icon.parse.app_error",
+    "translation": "不能解析混合表单"
+  },
+  {
+    "id": "api.team.set_team_icon.storage.app_error",
+    "translation": "不能上传团队图标。没有配置图片存储。"
+  },
+  {
+    "id": "api.team.set_team_icon.too_large.app_error",
+    "translation": "不能上传团队图标。文件太大。"
+  },
+  {
+    "id": "api.team.set_team_icon.write_file.app_error",
+    "translation": "无法保存团队图标"
+  },
+  {
     "id": "api.team.signup_team.email_disabled.app_error",
     "translation": "使用电子邮件注册团队被禁用。"
+  },
+  {
+    "id": "api.team.team_icon.update.app_error",
+    "translation": "更新团队图标时发生错误"
   },
   {
     "id": "api.team.update_member_roles.not_a_member",
@@ -2335,8 +2523,28 @@
     "translation": "您没有对应的权限"
   },
   {
+    "id": "api.team.update_team_scheme.license.error",
+    "translation": "许可证不支持更新团队方案"
+  },
+  {
+    "id": "api.team.update_team_scheme.scheme_scope.error",
+    "translation": "无法设定团队方案因为提供的方案不是团队方案。"
+  },
+  {
     "id": "api.templates.channel_name.group",
     "translation": "团体消息"
+  },
+  {
+    "id": "api.templates.deactivate_body.info",
+    "translation": "You deactivated your account on {{ .SiteURL }}.<br>If this change wasn't initiated by you or you want to reactivate your account, contact your system administrator."
+  },
+  {
+    "id": "api.templates.deactivate_body.title",
+    "translation": "您的帐号已在 {{ .ServerURL }} 注销"
+  },
+  {
+    "id": "api.templates.deactivate_subject",
+    "translation": "[{{ .SiteName }}] 您的帐号已在 {{ .ServerURL }} 注销"
   },
   {
     "id": "api.templates.email_change_body.info",
@@ -2683,12 +2891,12 @@
     "translation": "加入默认通道遇到一个问题 user_id=%s, team_id=%s, err=%v"
   },
   {
-    "id": "api.user.create_user.missing_hash_or_data.app_error",
-    "translation": "无效的哈系或 URL 查询数据。"
-  },
-  {
     "id": "api.user.create_user.missing_invite_id.app_error",
     "translation": "无效的邀请 id。"
+  },
+  {
+    "id": "api.user.create_user.missing_token.app_error",
+    "translation": "缺少令牌。"
   },
   {
     "id": "api.user.create_user.no_open_server",
@@ -2708,10 +2916,6 @@
   },
   {
     "id": "api.user.create_user.signup_link_invalid.app_error",
-    "translation": "注册链接无效"
-  },
-  {
-    "id": "api.user.create_user.signup_link_mismatched_invite_id.app_error",
     "translation": "注册链接无效"
   },
   {
@@ -2741,6 +2945,10 @@
   {
     "id": "api.user.get_me.getting.error",
     "translation": "获取用户配置文件中的错误 id=%v 强制注销"
+  },
+  {
+    "id": "api.user.get_profile_image.not_found.app_error",
+    "translation": "无法获取个人资料图片，用户不存在。"
   },
   {
     "id": "api.user.init.debug",
@@ -2847,6 +3055,10 @@
     "translation": "此服务器没有正确配置或者不支持 SAML 2.0。"
   },
   {
+    "id": "api.user.send_deactivate_email_and_forget.failed.error",
+    "translation": "无法发送帐号注销邮件"
+  },
+  {
     "id": "api.user.send_email_change_email_and_forget.error",
     "translation": "未能发送电子邮件通知电子邮件成功"
   },
@@ -2893,6 +3105,10 @@
   {
     "id": "api.user.update_active.no_deactivate_sso.app_error",
     "translation": "您无法修改 SSO 帐号的激活状态。请到 SSO 服务器上修改。"
+  },
+  {
+    "id": "api.user.update_active.not_enable.app_error",
+    "translation": "您不能注销自己因为此功能未开启。请联系您的系统管理员。"
   },
   {
     "id": "api.user.update_active.permissions.app_error",
@@ -3072,7 +3288,7 @@
   },
   {
     "id": "api.webhook.incoming.error",
-    "translation": "Could not decode the multipart payload of incoming webhook."
+    "translation": "无法解码传入的 webhook 混合数据。"
   },
   {
     "id": "api.webhook.init.debug",
@@ -3133,6 +3349,10 @@
   {
     "id": "api.websocket_handler.invalid_param.app_error",
     "translation": "无效的参数 {{.Name}}"
+  },
+  {
+    "id": "app.admin.test_email.failure",
+    "translation": "连接失败：{{.Error}}"
   },
   {
     "id": "app.channel.create_channel.no_team_id.app_error",
@@ -3539,10 +3759,6 @@
     "translation": "无效用户评论触发 Notify Prop。"
   },
   {
-    "id": "app.import.validate_user_import_data.notify_props_desktop_duration_invalid.error",
-    "translation": "用户的桌面间期 Notify Prop 值无效。"
-  },
-  {
     "id": "app.import.validate_user_import_data.notify_props_desktop_invalid.error",
     "translation": "用户的桌面 Notify Prop 值无效。"
   },
@@ -3596,11 +3812,19 @@
   },
   {
     "id": "app.notification.body.intro.direct.full",
-    "translation": "你有一条新消息。"
+    "translation": "你有一条新私信。"
   },
   {
     "id": "app.notification.body.intro.direct.generic",
-    "translation": "您有来自 {{.SenderName}} 的新私信"
+    "translation": "您有来自 @{{.SenderName}} 的新私信"
+  },
+  {
+    "id": "app.notification.body.intro.group_message.full",
+    "translation": "你有一条新团体消息。"
+  },
+  {
+    "id": "app.notification.body.intro.group_message.generic",
+    "translation": "您有来自 @{{.SenderName}} 的新团体消息"
   },
   {
     "id": "app.notification.body.intro.notification.full",
@@ -3608,19 +3832,27 @@
   },
   {
     "id": "app.notification.body.intro.notification.generic",
-    "translation": "您有来自 {{.SenderName}} 的新通知"
+    "translation": "您有来自 @{{.SenderName}} 的新通知"
   },
   {
     "id": "app.notification.body.text.direct.full",
-    "translation": "{{.SenderName}} - {{.Hour}}:{{.Minute}} {{.TimeZone}}, {{.Month}} {{.Day}}"
+    "translation": "@{{.SenderName}} - {{.Hour}}:{{.Minute}} {{.TimeZone}}, {{.Month}} {{.Day}}"
   },
   {
     "id": "app.notification.body.text.direct.generic",
     "translation": "{{.Hour}}:{{.Minute}} {{.Timezone}}, {{.Month}} {{.Day}}"
   },
   {
+    "id": "app.notification.body.text.group_message.full",
+    "translation": "频道：{{.ChannelName}}<br>@{{.SenderName}} - {{.Hour}}:{{.Minute}} {{.TimeZone}}, {{.Month}} {{.Day}}"
+  },
+  {
+    "id": "app.notification.body.text.group_message.generic",
+    "translation": "{{.Hour}}:{{.Minute}} {{.Timezone}}, {{.Month}} {{.Day}}"
+  },
+  {
     "id": "app.notification.body.text.notification.full",
-    "translation": "频道: {{.ChannelName}}<br>{{.SenderName}} - {{.Hour}}:{{.Minute}} {{.TimeZone}}, {{.Month}} {{.Day}}"
+    "translation": "频道：{{.ChannelName}}<br>@{{.SenderName}} - {{.Hour}}:{{.Minute}} {{.TimeZone}}, {{.Month}} {{.Day}}"
   },
   {
     "id": "app.notification.body.text.notification.generic",
@@ -3628,7 +3860,15 @@
   },
   {
     "id": "app.notification.subject.direct.full",
-    "translation": "[{{.SiteName}}] 来自 {{ .SenderDisplayName}} 的新私信消息于 {{.Month}} {{.Day}}, {{.Year}}"
+    "translation": "[{{.SiteName}}] 来自 @{{ .SenderDisplayName}} 于 {{.Month}} {{.Day}}, {{.Year}} 发送的新私信消息"
+  },
+  {
+    "id": "app.notification.subject.group_message.full",
+    "translation": "[{{ .SiteName }}] 在 [{{ .SiteName }}] 于 {{.Month}} {{.Day}}, {{.Year}} 的新团体消息"
+  },
+  {
+    "id": "app.notification.subject.group_message.generic",
+    "translation": "[{{.SiteName}}] 于 {{.Month}} {{.Day}}, {{.Year}} 的新团体消息"
   },
   {
     "id": "app.notification.subject.notification.full",
@@ -3636,7 +3876,11 @@
   },
   {
     "id": "app.plugin.activate.app_error",
-    "translation": "无法激活揭开的插件。插件可能已存在并已激活。"
+    "translation": "无法激活解压的插件。"
+  },
+  {
+    "id": "app.plugin.cluster.save_config.app_error",
+    "translation": "当机群开启并使用 ReadOnlyConfig 时，config.json 文件中的插件设置必须手动上传。"
   },
   {
     "id": "app.plugin.config.app_error",
@@ -3647,8 +3891,12 @@
     "translation": "无法停用插件"
   },
   {
+    "id": "app.plugin.delete_plugin_status_state.app_error",
+    "translation": "无法删除插件状态。"
+  },
+  {
     "id": "app.plugin.disabled.app_error",
-    "translation": "插件已禁用。"
+    "translation": "日志已停用。请检查您的日志了解详情。"
   },
   {
     "id": "app.plugin.extract.app_error",
@@ -3667,16 +3915,16 @@
     "translation": "无法获取已启动的插件"
   },
   {
-    "id": "app.plugin.id_length.app_error",
-    "translation": "插件 Id 必须小于 {{.Max}} 个字符。"
-  },
-  {
     "id": "app.plugin.install.app_error",
     "translation": "无法安装插件。"
   },
   {
     "id": "app.plugin.install_id.app_error",
     "translation": "无法安装插件。已存在相同 ID 的插件。"
+  },
+  {
+    "id": "app.plugin.invalid_id.app_error",
+    "translation": "插件 Id 必须至少 {{.Min}} 个字符，最多 {{.Max}} 个字符并匹配 {{.Regex}}。"
   },
   {
     "id": "app.plugin.manifest.app_error",
@@ -3691,16 +3939,44 @@
     "translation": "插件未安装"
   },
   {
+    "id": "app.plugin.prepackaged.app_error",
+    "translation": "无法安装预包装插件"
+  },
+  {
     "id": "app.plugin.remove.app_error",
     "translation": "无法删除插件"
+  },
+  {
+    "id": "app.plugin.set_plugin_status_state.app_error",
+    "translation": "无法设置插件状态。"
   },
   {
     "id": "app.plugin.upload_disabled.app_error",
     "translation": "插件上传已禁用。"
   },
   {
+    "id": "app.role.check_roles_exist.role_not_found",
+    "translation": "提供的角色不存在"
+  },
+  {
+    "id": "app.schemes.is_phase_2_migration_completed.not_completed.app_error",
+    "translation": "This API endpoint is not accessible as required migrations have not yet completed."
+  },
+  {
     "id": "app.team.join_user_to_team.max_accounts.app_error",
-    "translation": "这个团队已经达到允许的最大用户数量。请与系统管理员联系以设置更高的限制。"
+    "translation": "这个团队已经达到允许的最大帐号数量。请与系统管理员联系以设置更高的限制。"
+  },
+  {
+    "id": "app.timezones.failed_deserialize.app_error",
+    "translation": "反序列化区配置文件失败 file={{.Filename}}, err={{.Error}}"
+  },
+  {
+    "id": "app.timezones.load_config.app_error",
+    "translation": "时区配置文件不存在 file={{.Filename}}"
+  },
+  {
+    "id": "app.timezones.read_config.app_error",
+    "translation": "读取时区配置文件失败 file={{.Filename}}, err={{.Error}}"
   },
   {
     "id": "app.user_access_token.disabled",
@@ -3924,7 +4200,7 @@
   },
   {
     "id": "ent.compliance.run_limit.warning",
-    "translation": "任务'{{.JobName}}'的导出审核警告：'{{.FilePath}}'过多行返回截断至第30,000行"
+    "translation": "任务 '{{.JobName}}' 的导出审核警告：'{{.FilePath}}' 过多行返回截断至第 3,0000 行"
   },
   {
     "id": "ent.compliance.run_started.info",
@@ -4183,6 +4459,18 @@
     "translation": "未在 AD/LDAP 服务器上找到用户："
   },
   {
+    "id": "ent.migration.migratetosaml.email_already_used_by_other_user",
+    "translation": "电子邮箱地址已被其他 SAML 用户使用。"
+  },
+  {
+    "id": "ent.migration.migratetosaml.user_not_found_in_users_mapping_file",
+    "translation": "没有在用户文件里找到用户。"
+  },
+  {
+    "id": "ent.migration.migratetosaml.username_already_used_by_other_user",
+    "translation": "用户名已被其他 Mattermost 用户使用。"
+  },
+  {
     "id": "ent.saml.attribute.app_error",
     "translation": "SAML登入因不正确属性而失败。请联系您的系统管理员。"
   },
@@ -4343,6 +4631,14 @@
     "translation": "当前工作目录是 %v"
   },
   {
+    "id": "migrations.worker.run_advanced_permissions_phase_2_migration.invalid_progress",
+    "translation": "迁移因无效进度数据失败。"
+  },
+  {
+    "id": "migrations.worker.run_migration.unknown_key",
+    "translation": "Cannot run migration job due to unknown migration key."
+  },
+  {
     "id": "model.access.is_valid.access_token.app_error",
     "translation": "无效的访问令牌"
   },
@@ -4447,6 +4743,10 @@
     "translation": "无效的电子邮件通知值"
   },
   {
+    "id": "model.channel_member.is_valid.mute_value.app_error",
+    "translation": "无效的静音值"
+  },
+  {
     "id": "model.channel_member.is_valid.notify_level.app_error",
     "translation": "无效通知级别"
   },
@@ -4485,6 +4785,10 @@
   {
     "id": "model.channel_member_history.is_valid.user_id.app_error",
     "translation": "无效用户 id"
+  },
+  {
+    "id": "model.client.command.parse.app_error",
+    "translation": "无法解析传入数据"
   },
   {
     "id": "model.client.connecting.app_error",
@@ -4553,6 +4857,10 @@
   {
     "id": "model.client.writer.app_error",
     "translation": "无法建立 multipart 请求"
+  },
+  {
+    "id": "model.cluster.is_valid.id.app_error",
+    "translation": "无效 Id"
   },
   {
     "id": "model.command.is_valid.create_at.app_error",
@@ -4673,6 +4981,10 @@
   {
     "id": "model.config.is_valid.data_retention.message_retention_days_too_low.app_error",
     "translation": "消息保留至少一天。"
+  },
+  {
+    "id": "model.config.is_valid.display.custom_url_schemes.app_error",
+    "translation": "The custom URL scheme {{.Scheme}} is invalid. Custom URL schemes must start with a letter and contain only letters, numbers, plus (+), period (.), and hyphen (-)."
   },
   {
     "id": "model.config.is_valid.elastic_search.aggregate_posts_after_days.app_error",
@@ -4807,6 +5119,10 @@
     "translation": "AD/LDAP 栏 \"姓氏\" 为必填。"
   },
   {
+    "id": "model.config.is_valid.ldap_login_id",
+    "translation": "AD/LDAP 栏 \"登入 ID 属性\" 为必填。"
+  },
+  {
     "id": "model.config.is_valid.ldap_max_page_size.app_error",
     "translation": "无效的最大页面值。"
   },
@@ -4884,7 +5200,11 @@
   },
   {
     "id": "model.config.is_valid.message_export.export_type.app_error",
-    "translation": "Message export job ExportFormat must be one of either 'actiance' or 'globalrelay'"
+    "translation": "消息导出任务 ExportFormat 必须为 'actiance' 或 'globalrelay'"
+  },
+  {
+    "id": "model.config.is_valid.message_export.export_type.app_error",
+    "translation": "消息导出任务 ExportFormat 必须为 'actiance' 或 'globalrelay'"
   },
   {
     "id": "model.config.is_valid.message_export.file_location.app_error",
@@ -4895,8 +5215,28 @@
     "translation": "消息导出任务 FileLocation 必须为 FileSettings.Directory 的子目录"
   },
   {
+    "id": "model.config.is_valid.message_export.global_relay.config_missing.app_error",
+    "translation": "消息导出任务 ExportFormat 为 'globalrelay'，但缺少 GlobalRelaySettings"
+  },
+  {
+    "id": "model.config.is_valid.message_export.global_relay.customer_type.app_error",
+    "translation": "消息导出 GlobalRelaySettings.CustomerType 必须设为 'A9' 或 'A10'"
+  },
+  {
+    "id": "model.config.is_valid.message_export.global_relay.email_address.app_error",
+    "translation": "消息导出任务 GlobalRelaySettings.EmailAddress 必须为有效的电子邮箱地址"
+  },
+  {
+    "id": "model.config.is_valid.message_export.global_relay.smtp_password.app_error",
+    "translation": "必须设定消息导出任务 GlobalRelaySettings.SmtpPassword"
+  },
+  {
+    "id": "model.config.is_valid.message_export.global_relay.smtp_username.app_error",
+    "translation": "必须设定消息导出任务 GlobalRelaySettings.SmtpUsername"
+  },
+  {
     "id": "model.config.is_valid.message_export.global_relay_email_address.app_error",
-    "translation": "Message export job GlobalRelayEmailAddress must be set to a valid email address"
+    "translation": "消息导出任务 GlobalRelayEmailAddress 必须为有效的电子邮箱地址"
   },
   {
     "id": "model.config.is_valid.password_length.app_error",
@@ -4956,7 +5296,7 @@
   },
   {
     "id": "model.config.is_valid.site_url.app_error",
-    "translation": "站点网址必须为有效URL并且以 http:// 或 https:// 开头"
+    "translation": "网址必须为有效 URL 并且以 http:// 或 https:// 开头"
   },
   {
     "id": "model.config.is_valid.site_url_email_batching.app_error",
@@ -5025,6 +5365,10 @@
   {
     "id": "model.config.is_valid.webserver_security.app_error",
     "translation": "错误的网页服务器连接安全值。"
+  },
+  {
+    "id": "model.config.is_valid.websocket_url.app_error",
+    "translation": "Websocket 网址必须时有效的网址并且以 ws:// 或 wss:// 开头。"
   },
   {
     "id": "model.config.is_valid.write_timeout.app_error",
@@ -5539,10 +5883,6 @@
     "translation": "关闭 SqlStore"
   },
   {
-    "id": "store.sql.column_exists.critical",
-    "translation": "未能检查列是否存在 %v"
-  },
-  {
     "id": "store.sql.column_exists_missing_driver.critical",
     "translation": "未能检查因为缺少驱动程序列是否存在"
   },
@@ -5571,10 +5911,6 @@
     "translation": "未能创建列，因为缺少驱动程序"
   },
   {
-    "id": "store.sql.create_index.critical",
-    "translation": "创建索引失败 %v"
-  },
-  {
     "id": "store.sql.create_index_missing_driver.critical",
     "translation": "未能创建索引，因为缺少驱动程序"
   },
@@ -5599,10 +5935,6 @@
     "translation": "未能获取列的最大长度%v"
   },
   {
-    "id": "store.sql.open_conn.critical",
-    "translation": "打开数据库连接失败 err:%v"
-  },
-  {
     "id": "store.sql.open_conn.panic",
     "translation": "打开数据库连接失败 %v"
   },
@@ -5623,10 +5955,6 @@
     "translation": "数据库结构版本 %v 似乎过旧"
   },
   {
-    "id": "store.sql.schema_set.info",
-    "translation": "数据库结构版本设为 %v"
-  },
-  {
     "id": "store.sql.schema_upgrade_attempt.warn",
     "translation": "试图将数据库结构版本升级到 %v"
   },
@@ -5641,10 +5969,6 @@
   {
     "id": "store.sql.table_column_type.critical",
     "translation": "未能获得列的数据类型 %s 从表 %s: %v"
-  },
-  {
-    "id": "store.sql.table_exists.critical",
-    "translation": "未能检查表是否存在 %v"
   },
   {
     "id": "store.sql.too_short_ciphertext",
@@ -5699,10 +6023,6 @@
     "translation": "我们无法删除频道"
   },
   {
-    "id": "store.sql_channel.extra_updated.app_error",
-    "translation": "更新成员上次更新时间出现问题"
-  },
-  {
     "id": "store.sql_channel.get.existing.app_error",
     "translation": "我们找不到现有的频道"
   },
@@ -5721,6 +6041,10 @@
   {
     "id": "store.sql_channel.get_by_name.missing.app_error",
     "translation": "频道不存在"
+  },
+  {
+    "id": "store.sql_channel.get_by_scheme.app_error",
+    "translation": "无法用提供的方案获取频道"
   },
   {
     "id": "store.sql_channel.get_channel_counts.get.app_error",
@@ -5799,6 +6123,26 @@
     "translation": "我们不能增加提及数"
   },
   {
+    "id": "store.sql_channel.migrate_channel_members.commit_transaction.app_error",
+    "translation": "无法提交数据库事务"
+  },
+  {
+    "id": "store.sql_channel.migrate_channel_members.open_transaction.app_error",
+    "translation": "打开数据库事务失败。"
+  },
+  {
+    "id": "store.sql_channel.migrate_channel_members.rollback_transaction.app_error",
+    "translation": "打开数据库事务失败。"
+  },
+  {
+    "id": "store.sql_channel.migrate_channel_members.select.app_error",
+    "translation": "Failed to select the batch of channel members"
+  },
+  {
+    "id": "store.sql_channel.migrate_channel_members.update.app_error",
+    "translation": "无法更新频道成员"
+  },
+  {
     "id": "store.sql_channel.permanent_delete.app_error",
     "translation": "我们无法删除这个频道"
   },
@@ -5817,6 +6161,10 @@
   {
     "id": "store.sql_channel.remove_member.app_error",
     "translation": "我们无法删除频道成员"
+  },
+  {
+    "id": "store.sql_channel.reset_all_channel_schemes.app_error",
+    "translation": "我们无法重置频道方案"
   },
   {
     "id": "store.sql_channel.save.commit_transaction.app_error",
@@ -6319,6 +6667,18 @@
     "translation": "我们不能为用户选择要删除的信息（数量太多），请重新运行"
   },
   {
+    "id": "store.sql_post.query_max_post_size.error",
+    "translation": "我们无法判断最大支持的消息大小"
+  },
+  {
+    "id": "store.sql_post.query_max_post_size.max_post_size_bytes",
+    "translation": "Post.Message 最多支持 %d 字符 (%d 字节)"
+  },
+  {
+    "id": "store.sql_post.query_max_post_size.unrecognized_driver",
+    "translation": "没用检测消息最大小的实装"
+  },
+  {
     "id": "store.sql_post.save.app_error",
     "translation": "我们无法保存这个邮件"
   },
@@ -6345,10 +6705,6 @@
   {
     "id": "store.sql_preference.delete.app_error",
     "translation": "我们删除偏好设置时出现错误"
-  },
-  {
-    "id": "store.sql_preference.delete_unused_features.debug",
-    "translation": "删除任何未使用的预发行功能"
   },
   {
     "id": "store.sql_preference.get.app_error",
@@ -6445,6 +6801,102 @@
   {
     "id": "store.sql_reaction.save.save.app_error",
     "translation": "无法保存互动"
+  },
+  {
+    "id": "store.sql_role.delete.update.app_error",
+    "translation": "无法删除角色"
+  },
+  {
+    "id": "store.sql_role.get.app_error",
+    "translation": "无法获取角色"
+  },
+  {
+    "id": "store.sql_role.get_by_name.app_error",
+    "translation": "无法获取角色"
+  },
+  {
+    "id": "store.sql_role.get_by_names.app_error",
+    "translation": "无法获取角色"
+  },
+  {
+    "id": "store.sql_role.permanent_delete_all.app_error",
+    "translation": "我们无法永久删除所有角色"
+  },
+  {
+    "id": "store.sql_role.save.insert.app_error",
+    "translation": "无法保存新角色"
+  },
+  {
+    "id": "store.sql_role.save.invalid_role.app_error",
+    "translation": "无效的角色"
+  },
+  {
+    "id": "store.sql_role.save.invalid_role.app_error",
+    "translation": "无效的角色"
+  },
+  {
+    "id": "store.sql_role.save.open_transaction.app_error",
+    "translation": "Failed to open the transaction to save the role"
+  },
+  {
+    "id": "store.sql_role.save.update.app_error",
+    "translation": "无法更新角色"
+  },
+  {
+    "id": "store.sql_role.save_role.commit_transaction.app_error",
+    "translation": "Failed to commit the transaction to save the role"
+  },
+  {
+    "id": "store.sql_scheme.delete.role_update.app_error",
+    "translation": "无法删除此方案的角色"
+  },
+  {
+    "id": "store.sql_scheme.delete.scheme_in_use.app_error",
+    "translation": "无法删除此方案因为正被团队或频道使用。"
+  },
+  {
+    "id": "store.sql_scheme.delete.update.app_error",
+    "translation": "无法删除方案"
+  },
+  {
+    "id": "store.sql_scheme.get.app_error",
+    "translation": "无法获取方案"
+  },
+  {
+    "id": "store.sql_scheme.permanent_delete_all.app_error",
+    "translation": "我们无法永久删除方案"
+  },
+  {
+    "id": "store.sql_scheme.reset_channels.app_error",
+    "translation": "无法将此方案做为默认方案重置到所有频道"
+  },
+  {
+    "id": "store.sql_scheme.reset_teams.app_error",
+    "translation": "无法将此方案做为默认方案重置到所有团队"
+  },
+  {
+    "id": "store.sql_scheme.save.insert.app_error",
+    "translation": "无法创建方案"
+  },
+  {
+    "id": "store.sql_scheme.save.invalid_scheme.app_error",
+    "translation": "无效的方案"
+  },
+  {
+    "id": "store.sql_scheme.save.open_transaction.app_error",
+    "translation": "Failed to open the transaction to save the scheme"
+  },
+  {
+    "id": "store.sql_scheme.save.retrieve_default_scheme_roles.app_error",
+    "translation": "无法获取默认方案角色"
+  },
+  {
+    "id": "store.sql_scheme.save.update.app_error",
+    "translation": "无法更新方案"
+  },
+  {
+    "id": "store.sql_scheme.save_scheme.commit_transaction.app_error",
+    "translation": "Failed to commit the transaction to save the scheme"
   },
   {
     "id": "store.sql_session.analytics_session_count.app_error",
@@ -6551,6 +7003,10 @@
     "translation": "我们无法获得数据库版本"
   },
   {
+    "id": "store.sql_system.permanent_delete_by_name.app_error",
+    "translation": "我们无法永久删除系统表数据"
+  },
+  {
     "id": "store.sql_system.save.app_error",
     "translation": "我们保存系统属性时遇到了一个错误"
   },
@@ -6591,6 +7047,10 @@
     "translation": "我们无法查找这个存在的团队"
   },
   {
+    "id": "store.sql_team.get_by_scheme.app_error",
+    "translation": "无法用提供的方案获取频道"
+  },
+  {
     "id": "store.sql_team.get_member.app_error",
     "translation": "我们无法获得频道成员"
   },
@@ -6619,12 +7079,36 @@
     "translation": "我们无法获取团队未读消息"
   },
   {
+    "id": "store.sql_team.migrate_team_members.commit_transaction.app_error",
+    "translation": "提交数据库事务失败"
+  },
+  {
+    "id": "store.sql_team.migrate_team_members.open_transaction.app_error",
+    "translation": "无法打开数据库事务"
+  },
+  {
+    "id": "store.sql_team.migrate_team_members.rollback_transaction.app_error",
+    "translation": "打开数据库事务失败。"
+  },
+  {
+    "id": "store.sql_team.migrate_team_members.select.app_error",
+    "translation": " Failed to select the batch of team members"
+  },
+  {
+    "id": "store.sql_team.migrate_team_members.update.app_error",
+    "translation": "无法更新团队成员"
+  },
+  {
     "id": "store.sql_team.permanent_delete.app_error",
     "translation": "我们不能删除现有的团队"
   },
   {
     "id": "store.sql_team.remove_member.app_error",
     "translation": "我们无法删除频道成员"
+  },
+  {
+    "id": "store.sql_team.reset_all_team_schemes.app_error",
+    "translation": "我们无法重置团队方案"
   },
   {
     "id": "store.sql_team.save.app_error",
@@ -7112,7 +7596,7 @@
   },
   {
     "id": "utils.mail.sendMail.attachments.write_error",
-    "translation": "Failed to write attachment to email"
+    "translation": "给邮件添加附件失败"
   },
   {
     "id": "utils.mail.send_mail.close.app_error",
@@ -7120,7 +7604,7 @@
   },
   {
     "id": "utils.mail.send_mail.from_address.app_error",
-    "translation": "缺少或无效的从寄件人地址通知设定。"
+    "translation": "设定 \"From Address\" 错误"
   },
   {
     "id": "utils.mail.send_mail.msg.app_error",
@@ -7136,7 +7620,7 @@
   },
   {
     "id": "utils.mail.send_mail.to_address.app_error",
-    "translation": "缺少或无效的通知到收件人地址设定。"
+    "translation": "设定 \"To Address\" 错误"
   },
   {
     "id": "utils.mail.test.configured.error",
@@ -7233,6 +7717,10 @@
   {
     "id": "web.incoming_webhook.channel.app_error",
     "translation": "找不到该频道"
+  },
+  {
+    "id": "web.incoming_webhook.channel_locked.app_error",
+    "translation": "This webhook is not permitted to post to the requested channel"
   },
   {
     "id": "web.incoming_webhook.disabled.app_error",

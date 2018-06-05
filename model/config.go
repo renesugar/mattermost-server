@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -21,6 +22,7 @@ const (
 	IMAGE_DRIVER_LOCAL = "local"
 	IMAGE_DRIVER_S3    = "amazons3"
 
+	DATABASE_DRIVER_SQLITE   = "sqlite3"
 	DATABASE_DRIVER_MYSQL    = "mysql"
 	DATABASE_DRIVER_POSTGRES = "postgres"
 
@@ -34,10 +36,6 @@ const (
 	SERVICE_GITLAB    = "gitlab"
 	SERVICE_GOOGLE    = "google"
 	SERVICE_OFFICE365 = "office365"
-
-	WEBSERVER_MODE_REGULAR  = "regular"
-	WEBSERVER_MODE_GZIP     = "gzip"
-	WEBSERVER_MODE_DISABLED = "disabled"
 
 	GENERIC_NO_CHANNEL_NOTIFICATION = "generic_no_channel"
 	GENERIC_NOTIFICATION            = "generic"
@@ -99,15 +97,12 @@ const (
 
 	EMAIL_SETTINGS_DEFAULT_FEEDBACK_ORGANIZATION = ""
 
-	SUPPORT_SETTINGS_DEFAULT_TERMS_OF_SERVICE_LINK      = "https://about.mattermost.com/default-terms/"
-	SUPPORT_SETTINGS_DEFAULT_PRIVACY_POLICY_LINK        = "https://about.mattermost.com/default-privacy-policy/"
-	SUPPORT_SETTINGS_DEFAULT_ABOUT_LINK                 = "https://about.mattermost.com/default-about/"
-	SUPPORT_SETTINGS_DEFAULT_HELP_LINK                  = "https://about.mattermost.com/default-help/"
-	SUPPORT_SETTINGS_DEFAULT_REPORT_A_PROBLEM_LINK      = "https://about.mattermost.com/default-report-a-problem/"
-	SUPPORT_SETTINGS_DEFAULT_ADMINISTRATORS_GUIDE_LINK  = "https://about.mattermost.com/administrators-guide/"
-	SUPPORT_SETTINGS_DEFAULT_TROUBLESHOOTING_FORUM_LINK = "https://about.mattermost.com/troubleshooting-forum/"
-	SUPPORT_SETTINGS_DEFAULT_COMMERCIAL_SUPPORT_LINK    = "https://about.mattermost.com/commercial-support/"
-	SUPPORT_SETTINGS_DEFAULT_SUPPORT_EMAIL              = "feedback@mattermost.com"
+	SUPPORT_SETTINGS_DEFAULT_TERMS_OF_SERVICE_LINK = "https://about.mattermost.com/default-terms/"
+	SUPPORT_SETTINGS_DEFAULT_PRIVACY_POLICY_LINK   = "https://about.mattermost.com/default-privacy-policy/"
+	SUPPORT_SETTINGS_DEFAULT_ABOUT_LINK            = "https://about.mattermost.com/default-about/"
+	SUPPORT_SETTINGS_DEFAULT_HELP_LINK             = "https://about.mattermost.com/default-help/"
+	SUPPORT_SETTINGS_DEFAULT_REPORT_A_PROBLEM_LINK = "https://about.mattermost.com/default-report-a-problem/"
+	SUPPORT_SETTINGS_DEFAULT_SUPPORT_EMAIL         = "feedback@mattermost.com"
 
 	LDAP_SETTINGS_DEFAULT_FIRST_NAME_ATTRIBUTE = ""
 	LDAP_SETTINGS_DEFAULT_LAST_NAME_ATTRIBUTE  = ""
@@ -159,8 +154,12 @@ const (
 	PLUGIN_SETTINGS_DEFAULT_DIRECTORY        = "./plugins"
 	PLUGIN_SETTINGS_DEFAULT_CLIENT_DIRECTORY = "./client/plugins"
 
+	TIMEZONE_SETTINGS_DEFAULT_SUPPORTED_TIMEZONES_PATH = "timezones.json"
+
 	COMPLIANCE_EXPORT_TYPE_ACTIANCE    = "actiance"
 	COMPLIANCE_EXPORT_TYPE_GLOBALRELAY = "globalrelay"
+	GLOBALRELAY_CUSTOMER_TYPE_A9       = "A9"
+	GLOBALRELAY_CUSTOMER_TYPE_A10      = "A10"
 )
 
 type ServiceSettings struct {
@@ -186,7 +185,6 @@ type ServiceSettings struct {
 	EnableOnlyAdminIntegrations                       *bool
 	EnablePostUsernameOverride                        bool
 	EnablePostIconOverride                            bool
-	EnableAPIv3                                       *bool
 	EnableLinkPreviews                                *bool
 	EnableTesting                                     bool
 	EnableDeveloper                                   *bool
@@ -227,6 +225,8 @@ type ServiceSettings struct {
 	ImageProxyType                                    *string
 	ImageProxyURL                                     *string
 	ImageProxyOptions                                 *string
+	EnableAPITeamDeletion                             *bool
+	ExperimentalEnableHardenedMode                    *bool
 }
 
 func (s *ServiceSettings) SetDefaults() {
@@ -244,10 +244,6 @@ func (s *ServiceSettings) SetDefaults() {
 
 	if s.ListenAddress == nil {
 		s.ListenAddress = NewString(SERVICE_SETTINGS_DEFAULT_LISTEN_AND_ADDRESS)
-	}
-
-	if s.EnableAPIv3 == nil {
-		s.EnableAPIv3 = NewBool(true)
 	}
 
 	if s.EnableLinkPreviews == nil {
@@ -429,7 +425,7 @@ func (s *ServiceSettings) SetDefaults() {
 	}
 
 	if s.PostEditTimeLimit == nil {
-		s.PostEditTimeLimit = NewInt(300)
+		s.PostEditTimeLimit = NewInt(-1)
 	}
 
 	if s.EnablePreviewFeatures == nil {
@@ -459,17 +455,28 @@ func (s *ServiceSettings) SetDefaults() {
 	if s.ImageProxyOptions == nil {
 		s.ImageProxyOptions = NewString("")
 	}
+
+	if s.EnableAPITeamDeletion == nil {
+		s.EnableAPITeamDeletion = NewBool(false)
+	}
+
+	if s.ExperimentalEnableHardenedMode == nil {
+		s.ExperimentalEnableHardenedMode = NewBool(false)
+	}
 }
 
 type ClusterSettings struct {
-	Enable                *bool
-	ClusterName           *string
-	OverrideHostname      *string
-	UseIpAddress          *bool
-	UseExperimentalGossip *bool
-	ReadOnlyConfig        *bool
-	GossipPort            *int
-	StreamingPort         *int
+	Enable                      *bool
+	ClusterName                 *string
+	OverrideHostname            *string
+	UseIpAddress                *bool
+	UseExperimentalGossip       *bool
+	ReadOnlyConfig              *bool
+	GossipPort                  *int
+	StreamingPort               *int
+	MaxIdleConns                *int
+	MaxIdleConnsPerHost         *int
+	IdleConnTimeoutMilliseconds *int
 }
 
 func (s *ClusterSettings) SetDefaults() {
@@ -503,6 +510,18 @@ func (s *ClusterSettings) SetDefaults() {
 
 	if s.StreamingPort == nil {
 		s.StreamingPort = NewInt(8075)
+	}
+
+	if s.MaxIdleConns == nil {
+		s.MaxIdleConns = NewInt(100)
+	}
+
+	if s.MaxIdleConnsPerHost == nil {
+		s.MaxIdleConnsPerHost = NewInt(128)
+	}
+
+	if s.IdleConnTimeoutMilliseconds == nil {
+		s.IdleConnTimeoutMilliseconds = NewInt(90000)
 	}
 }
 
@@ -587,9 +606,10 @@ func (s *SqlSettings) SetDefaults() {
 type LogSettings struct {
 	EnableConsole          bool
 	ConsoleLevel           string
+	ConsoleJson            *bool
 	EnableFile             bool
 	FileLevel              string
-	FileFormat             string
+	FileJson               *bool
 	FileLocation           string
 	EnableWebhookDebugging bool
 	EnableDiagnostics      *bool
@@ -598,6 +618,14 @@ type LogSettings struct {
 func (s *LogSettings) SetDefaults() {
 	if s.EnableDiagnostics == nil {
 		s.EnableDiagnostics = NewBool(true)
+	}
+
+	if s.ConsoleJson == nil {
+		s.ConsoleJson = NewBool(true)
+	}
+
+	if s.FileJson == nil {
+		s.FileJson = NewBool(true)
 	}
 }
 
@@ -732,6 +760,7 @@ type EmailSettings struct {
 	EnableEmailBatching               *bool
 	EmailBatchingBufferSize           *int
 	EmailBatchingInterval             *int
+	EnablePreviewModeBanner           *bool
 	SkipServerCertificateVerification *bool
 	EmailNotificationContentsType     *string
 	LoginButtonColor                  *string
@@ -782,6 +811,10 @@ func (s *EmailSettings) SetDefaults() {
 
 	if s.EmailBatchingInterval == nil {
 		s.EmailBatchingInterval = NewInt(EMAIL_BATCHING_INTERVAL)
+	}
+
+	if s.EnablePreviewModeBanner == nil {
+		s.EnablePreviewModeBanner = NewBool(true)
 	}
 
 	if s.EnableSMTPAuth == nil {
@@ -972,9 +1005,10 @@ func (s *ThemeSettings) SetDefaults() {
 type TeamSettings struct {
 	SiteName                            string
 	MaxUsersPerTeam                     *int
-	EnableTeamCreation                  bool
-	EnableUserCreation                  bool
+	EnableTeamCreation                  *bool
+	EnableUserCreation                  *bool
 	EnableOpenServer                    *bool
+	EnableUserDeactivation              *bool
 	RestrictCreationToDomains           string
 	EnableCustomBrand                   *bool
 	CustomBrandText                     *string
@@ -994,6 +1028,8 @@ type TeamSettings struct {
 	MaxNotificationsPerChannel          *int64
 	EnableConfirmNotificationsToChannel *bool
 	TeammateNameDisplay                 *string
+	ExperimentalEnableAutomaticReplies  *bool
+	ExperimentalHideTownSquareinLHS     *bool
 	ExperimentalTownSquareIsReadOnly    *bool
 	ExperimentalPrimaryTeam             *string
 }
@@ -1005,6 +1041,10 @@ func (s *TeamSettings) SetDefaults() {
 
 	if s.EnableCustomBrand == nil {
 		s.EnableCustomBrand = NewBool(false)
+	}
+
+	if s.EnableUserDeactivation == nil {
+		s.EnableUserDeactivation = NewBool(false)
 	}
 
 	if s.CustomBrandText == nil {
@@ -1088,6 +1128,14 @@ func (s *TeamSettings) SetDefaults() {
 		s.EnableConfirmNotificationsToChannel = NewBool(true)
 	}
 
+	if s.ExperimentalEnableAutomaticReplies == nil {
+		s.ExperimentalEnableAutomaticReplies = NewBool(false)
+	}
+
+	if s.ExperimentalHideTownSquareinLHS == nil {
+		s.ExperimentalHideTownSquareinLHS = NewBool(false)
+	}
+
 	if s.ExperimentalTownSquareIsReadOnly == nil {
 		s.ExperimentalTownSquareIsReadOnly = NewBool(false)
 	}
@@ -1095,6 +1143,15 @@ func (s *TeamSettings) SetDefaults() {
 	if s.ExperimentalPrimaryTeam == nil {
 		s.ExperimentalPrimaryTeam = NewString("")
 	}
+
+	if s.EnableTeamCreation == nil {
+		s.EnableTeamCreation = NewBool(true)
+	}
+
+	if s.EnableUserCreation == nil {
+		s.EnableUserCreation = NewBool(true)
+	}
+
 }
 
 type ClientRequirements struct {
@@ -1128,8 +1185,9 @@ type LdapSettings struct {
 	NicknameAttribute  *string
 	IdAttribute        *string
 	PositionAttribute  *string
+	LoginIdAttribute   *string
 
-	// Syncronization
+	// Synchronization
 	SyncIntervalMinutes *int
 
 	// Advanced
@@ -1209,6 +1267,12 @@ func (s *LdapSettings) SetDefaults() {
 
 	if s.PositionAttribute == nil {
 		s.PositionAttribute = NewString(LDAP_SETTINGS_DEFAULT_POSITION_ATTRIBUTE)
+	}
+
+	// For those upgrading to the version when LoginIdAttribute was added
+	// they need IdAttribute == LoginIdAttribute not to break
+	if s.LoginIdAttribute == nil {
+		s.LoginIdAttribute = s.IdAttribute
 	}
 
 	if s.SyncIntervalMinutes == nil {
@@ -1296,6 +1360,9 @@ type SamlSettings struct {
 	IdpDescriptorUrl            *string
 	AssertionConsumerServiceURL *string
 
+	ScopingIDPProviderId *string
+	ScopingIDPName       *string
+
 	IdpCertificateFile    *string
 	PublicCertificateFile *string
 	PrivateKeyFile        *string
@@ -1355,6 +1422,14 @@ func (s *SamlSettings) SetDefaults() {
 
 	if s.AssertionConsumerServiceURL == nil {
 		s.AssertionConsumerServiceURL = NewString("")
+	}
+
+	if s.ScopingIDPProviderId == nil {
+		s.ScopingIDPProviderId = NewString("")
+	}
+
+	if s.ScopingIDPName == nil {
+		s.ScopingIDPName = NewString("")
 	}
 
 	if s.LoginButtonText == nil || *s.LoginButtonText == "" {
@@ -1634,6 +1709,28 @@ func (s *PluginSettings) SetDefaults() {
 	}
 }
 
+type GlobalRelayMessageExportSettings struct {
+	CustomerType *string // must be either A9 or A10, dictates SMTP server url
+	SmtpUsername *string
+	SmtpPassword *string
+	EmailAddress *string // the address to send messages to
+}
+
+func (s *GlobalRelayMessageExportSettings) SetDefaults() {
+	if s.CustomerType == nil {
+		s.CustomerType = NewString(GLOBALRELAY_CUSTOMER_TYPE_A9)
+	}
+	if s.SmtpUsername == nil {
+		s.SmtpUsername = NewString("")
+	}
+	if s.SmtpPassword == nil {
+		s.SmtpPassword = NewString("")
+	}
+	if s.EmailAddress == nil {
+		s.EmailAddress = NewString("")
+	}
+}
+
 type MessageExportSettings struct {
 	EnableExport        *bool
 	ExportFormat        *string
@@ -1642,7 +1739,7 @@ type MessageExportSettings struct {
 	BatchSize           *int
 
 	// formatter-specific settings - these are only expected to be non-nil if ExportFormat is set to the associated format
-	GlobalRelayEmailAddress *string
+	GlobalRelaySettings *GlobalRelayMessageExportSettings
 }
 
 func (s *MessageExportSettings) SetDefaults() {
@@ -1672,6 +1769,37 @@ func (s *MessageExportSettings) SetDefaults() {
 
 	if s.BatchSize == nil {
 		s.BatchSize = NewInt(10000)
+	}
+
+	if s.GlobalRelaySettings == nil {
+		s.GlobalRelaySettings = &GlobalRelayMessageExportSettings{}
+	}
+	s.GlobalRelaySettings.SetDefaults()
+}
+
+type DisplaySettings struct {
+	CustomUrlSchemes     *[]string
+	ExperimentalTimezone *bool
+}
+
+func (s *DisplaySettings) SetDefaults() {
+	if s.CustomUrlSchemes == nil {
+		customUrlSchemes := []string{}
+		s.CustomUrlSchemes = &customUrlSchemes
+	}
+
+	if s.ExperimentalTimezone == nil {
+		s.ExperimentalTimezone = NewBool(false)
+	}
+}
+
+type TimezoneSettings struct {
+	SupportedTimezonesPath *string
+}
+
+func (s *TimezoneSettings) SetDefaults() {
+	if s.SupportedTimezonesPath == nil {
+		s.SupportedTimezonesPath = NewString(TIMEZONE_SETTINGS_DEFAULT_SUPPORTED_TIMEZONES_PATH)
 	}
 }
 
@@ -1708,6 +1836,8 @@ type Config struct {
 	MessageExportSettings MessageExportSettings
 	JobSettings           JobSettings
 	PluginSettings        PluginSettings
+	DisplaySettings       DisplaySettings
+	TimezoneSettings      TimezoneSettings
 }
 
 func (o *Config) Clone() *Config {
@@ -1777,6 +1907,8 @@ func (o *Config) SetDefaults() {
 	o.JobSettings.SetDefaults()
 	o.WebrtcSettings.SetDefaults()
 	o.MessageExportSettings.SetDefaults()
+	o.TimezoneSettings.SetDefaults()
+	o.DisplaySettings.SetDefaults()
 }
 
 func (o *Config) IsValid() *AppError {
@@ -1845,6 +1977,10 @@ func (o *Config) IsValid() *AppError {
 	}
 
 	if err := o.MessageExportSettings.isValid(o.FileSettings); err != nil {
+		return err
+	}
+
+	if err := o.DisplaySettings.isValid(); err != nil {
 		return err
 	}
 
@@ -1995,6 +2131,10 @@ func (ls *LdapSettings) isValid() *AppError {
 
 		if *ls.IdAttribute == "" {
 			return NewAppError("Config.IsValid", "model.config.is_valid.ldap_id", nil, "", http.StatusBadRequest)
+		}
+
+		if *ls.LoginIdAttribute == "" {
+			return NewAppError("Config.IsValid", "model.config.is_valid.ldap_login_id", nil, "", http.StatusBadRequest)
 		}
 	}
 
@@ -2206,13 +2346,41 @@ func (mes *MessageExportSettings) isValid(fs FileSettings) *AppError {
 		}
 
 		if *mes.ExportFormat == COMPLIANCE_EXPORT_TYPE_GLOBALRELAY {
-			// validating email addresses is hard - just make sure it contains an '@' sign
-			// see https://stackoverflow.com/questions/201323/using-a-regular-expression-to-validate-an-email-address
-			if mes.GlobalRelayEmailAddress == nil || !strings.Contains(*mes.GlobalRelayEmailAddress, "@") {
-				return NewAppError("Config.IsValid", "model.config.is_valid.message_export.global_relay_email_address.app_error", nil, "", http.StatusBadRequest)
+			if mes.GlobalRelaySettings == nil {
+				return NewAppError("Config.IsValid", "model.config.is_valid.message_export.global_relay.config_missing.app_error", nil, "", http.StatusBadRequest)
+			} else if mes.GlobalRelaySettings.CustomerType == nil || (*mes.GlobalRelaySettings.CustomerType != GLOBALRELAY_CUSTOMER_TYPE_A9 && *mes.GlobalRelaySettings.CustomerType != GLOBALRELAY_CUSTOMER_TYPE_A10) {
+				return NewAppError("Config.IsValid", "model.config.is_valid.message_export.global_relay.customer_type.app_error", nil, "", http.StatusBadRequest)
+			} else if mes.GlobalRelaySettings.EmailAddress == nil || !strings.Contains(*mes.GlobalRelaySettings.EmailAddress, "@") {
+				// validating email addresses is hard - just make sure it contains an '@' sign
+				// see https://stackoverflow.com/questions/201323/using-a-regular-expression-to-validate-an-email-address
+				return NewAppError("Config.IsValid", "model.config.is_valid.message_export.global_relay.email_address.app_error", nil, "", http.StatusBadRequest)
+			} else if mes.GlobalRelaySettings.SmtpUsername == nil || *mes.GlobalRelaySettings.SmtpUsername == "" {
+				return NewAppError("Config.IsValid", "model.config.is_valid.message_export.global_relay.smtp_username.app_error", nil, "", http.StatusBadRequest)
+			} else if mes.GlobalRelaySettings.SmtpPassword == nil || *mes.GlobalRelaySettings.SmtpPassword == "" {
+				return NewAppError("Config.IsValid", "model.config.is_valid.message_export.global_relay.smtp_password.app_error", nil, "", http.StatusBadRequest)
 			}
 		}
 	}
+	return nil
+}
+
+func (ds *DisplaySettings) isValid() *AppError {
+	if len(*ds.CustomUrlSchemes) != 0 {
+		validProtocolPattern := regexp.MustCompile(`(?i)^\s*[a-z][a-z0-9+.-]*\s*$`)
+
+		for _, scheme := range *ds.CustomUrlSchemes {
+			if !validProtocolPattern.MatchString(scheme) {
+				return NewAppError(
+					"Config.IsValid",
+					"model.config.is_valid.display.custom_url_schemes.app_error",
+					map[string]interface{}{"Scheme": scheme},
+					"",
+					http.StatusBadRequest,
+				)
+			}
+		}
+	}
+
 	return nil
 }
 

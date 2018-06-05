@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"path/filepath"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -107,9 +108,13 @@ func (env *Environment) IsPluginActive(pluginId string) bool {
 }
 
 // Activates the plugin with the given id.
-func (env *Environment) ActivatePlugin(id string) error {
+func (env *Environment) ActivatePlugin(id string, onError func(error)) error {
 	env.mutex.Lock()
 	defer env.mutex.Unlock()
+
+	if !plugin.IsValidId(id) {
+		return fmt.Errorf("invalid plugin id: %s", id)
+	}
 
 	if _, ok := env.activePlugins[id]; ok {
 		return fmt.Errorf("plugin already active: %v", id)
@@ -151,6 +156,14 @@ func (env *Environment) ActivatePlugin(id string) error {
 		if err := supervisor.Start(api); err != nil {
 			return errors.Wrapf(err, "unable to start plugin: %v", id)
 		}
+		if onError != nil {
+			go func() {
+				err := supervisor.Wait()
+				if err != nil {
+					onError(err)
+				}
+			}()
+		}
 
 		activePlugin.Supervisor = supervisor
 	}
@@ -163,12 +176,24 @@ func (env *Environment) ActivatePlugin(id string) error {
 			return fmt.Errorf("env missing webapp path, cannot activate plugin: %v", id)
 		}
 
-		webappBundle, err := ioutil.ReadFile(fmt.Sprintf("%s/%s/webapp/%s_bundle.js", env.searchPath, id, id))
+		bundlePath := filepath.Clean(bundle.Manifest.Webapp.BundlePath)
+		if bundlePath == "" || bundlePath[0] == '.' {
+			return fmt.Errorf("invalid webapp bundle path")
+		}
+		bundlePath = filepath.Join(env.searchPath, id, bundlePath)
+
+		webappBundle, err := ioutil.ReadFile(bundlePath)
 		if err != nil {
-			if supervisor != nil {
-				supervisor.Stop()
+			// Backwards compatibility for plugins where webapp.bundle_path was ignored. This should
+			// be removed eventually.
+			if webappBundle2, err2 := ioutil.ReadFile(fmt.Sprintf("%s/%s/webapp/%s_bundle.js", env.searchPath, id, id)); err2 == nil {
+				webappBundle = webappBundle2
+			} else {
+				if supervisor != nil {
+					supervisor.Stop()
+				}
+				return errors.Wrapf(err, "unable to read webapp bundle: %v", id)
 			}
-			return errors.Wrapf(err, "unable to read webapp bundle: %v", id)
 		}
 
 		err = ioutil.WriteFile(fmt.Sprintf("%s/%s_bundle.js", env.webappPath, id), webappBundle, 0644)
@@ -287,6 +312,65 @@ func (h *MultiPluginHooks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.NotFound(w, r)
+}
+
+// MessageWillBePosted invokes the MessageWillBePosted hook for all plugins. Ordering
+// is not guaranteed and the next plugin will get the previous one's modifications.
+// if a plugin rejects a post, the rest of the plugins will not know that an attempt was made.
+// Returns the final result post, or nil if the post was rejected and a string with a reason
+// for the user the message was rejected.
+func (h *MultiPluginHooks) MessageWillBePosted(post *model.Post) (*model.Post, string) {
+	h.env.mutex.RLock()
+	defer h.env.mutex.RUnlock()
+
+	for _, activePlugin := range h.env.activePlugins {
+		if activePlugin.Supervisor == nil {
+			continue
+		}
+		var rejectionReason string
+		post, rejectionReason = activePlugin.Supervisor.Hooks().MessageWillBePosted(post)
+		if post == nil {
+			return nil, rejectionReason
+		}
+	}
+	return post, ""
+}
+
+// MessageWillBeUpdated invokes the MessageWillBeUpdated hook for all plugins. Ordering
+// is not guaranteed and the next plugin will get the previous one's modifications.
+// if a plugin rejects a post, the rest of the plugins will not know that an attempt was made.
+// Returns the final result post, or nil if the post was rejected and a string with a reason
+// for the user the message was rejected.
+func (h *MultiPluginHooks) MessageWillBeUpdated(newPost, oldPost *model.Post) (*model.Post, string) {
+	h.env.mutex.RLock()
+	defer h.env.mutex.RUnlock()
+
+	post := newPost
+	for _, activePlugin := range h.env.activePlugins {
+		if activePlugin.Supervisor == nil {
+			continue
+		}
+		var rejectionReason string
+		post, rejectionReason = activePlugin.Supervisor.Hooks().MessageWillBeUpdated(post, oldPost)
+		if post == nil {
+			return nil, rejectionReason
+		}
+	}
+	return post, ""
+}
+
+func (h *MultiPluginHooks) MessageHasBeenPosted(post *model.Post) {
+	h.invoke(func(hooks plugin.Hooks) error {
+		hooks.MessageHasBeenPosted(post)
+		return nil
+	})
+}
+
+func (h *MultiPluginHooks) MessageHasBeenUpdated(newPost, oldPost *model.Post) {
+	h.invoke(func(hooks plugin.Hooks) error {
+		hooks.MessageHasBeenUpdated(newPost, oldPost)
+		return nil
+	})
 }
 
 func (h *SinglePluginHooks) invoke(f func(plugin.Hooks) error) error {
