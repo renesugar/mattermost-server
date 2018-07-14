@@ -49,6 +49,7 @@ type TestHelper struct {
 
 	SystemAdminClient *model.Client4
 	SystemAdminUser   *model.User
+	tempWorkspace     string
 }
 
 type persistentTestStore struct {
@@ -137,6 +138,25 @@ func setupTestHelper(enterprise bool) *TestHelper {
 
 	th.Client = th.CreateClient()
 	th.SystemAdminClient = th.CreateClient()
+
+	if th.tempWorkspace == "" {
+		dir, err := ioutil.TempDir("", "apptest")
+		if err != nil {
+			panic(err)
+		}
+		th.tempWorkspace = dir
+	}
+
+	pluginDir := filepath.Join(th.tempWorkspace, "plugins")
+	webappDir := filepath.Join(th.tempWorkspace, "webapp")
+
+	th.App.UpdateConfig(func(cfg *model.Config) {
+		*cfg.PluginSettings.Directory = pluginDir
+		*cfg.PluginSettings.ClientDirectory = webappDir
+	})
+
+	th.App.InitPlugins(pluginDir, webappDir)
+
 	return th
 }
 
@@ -269,6 +289,10 @@ func (me *TestHelper) CreateClient() *model.Client4 {
 
 func (me *TestHelper) CreateWebSocketClient() (*model.WebSocketClient, *model.AppError) {
 	return model.NewWebSocketClient4(fmt.Sprintf("ws://localhost:%v", me.App.Srv.ListenAddr.Port), me.Client.AuthToken)
+}
+
+func (me *TestHelper) CreateWebSocketSystemAdminClient() (*model.WebSocketClient, *model.AppError) {
+	return model.NewWebSocketClient4(fmt.Sprintf("ws://localhost:%v", me.App.Srv.ListenAddr.Port), me.SystemAdminClient.AuthToken)
 }
 
 func (me *TestHelper) CreateUser() *model.User {

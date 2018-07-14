@@ -9,8 +9,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"fmt"
 	"github.com/mattermost/mattermost-server/model"
 	"github.com/mattermost/mattermost-server/utils"
+	"regexp"
+	"time"
 )
 
 func TestSendNotifications(t *testing.T) {
@@ -88,6 +91,7 @@ func TestGetExplicitMentions(t *testing.T) {
 
 	for name, tc := range map[string]struct {
 		Message  string
+		Attachments []*model.SlackAttachment
 		Keywords map[string][]string
 		Expected *ExplicitMentions
 	}{
@@ -508,9 +512,32 @@ func TestGetExplicitMentions(t *testing.T) {
 				},
 			},
 		},
+		"should include the mentions from attachment text and preText": {
+			Message: "this is an message for @user1",
+			Attachments: []*model.SlackAttachment{
+				{
+					Text:    "this is a message For @user2",
+					Pretext: "this is a message for @here",
+				},
+			},
+			Keywords: map[string][]string{"@user1": {id1}, "@user2": {id2}},
+			Expected: &ExplicitMentions{
+				MentionedUserIds: map[string]bool{
+					id1: true,
+					id2: true,
+				},
+				HereMentioned: true,
+			},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			m := GetExplicitMentions(tc.Message, tc.Keywords)
+
+			post := &model.Post{Message: tc.Message, Props: model.StringInterface{
+				"attachments": tc.Attachments,
+				},
+			}
+
+			m := GetExplicitMentions(post, tc.Keywords)
 			if tc.Expected.MentionedUserIds == nil {
 				tc.Expected.MentionedUserIds = make(map[string]bool)
 			}
@@ -564,7 +591,8 @@ func TestGetExplicitMentionsAtHere(t *testing.T) {
 	}
 
 	for message, shouldMention := range cases {
-		if m := GetExplicitMentions(message, nil); m.HereMentioned && !shouldMention {
+		post := &model.Post{Message: message}
+		if m := GetExplicitMentions(post, nil); m.HereMentioned && !shouldMention {
 			t.Fatalf("shouldn't have mentioned @here with \"%v\"", message)
 		} else if !m.HereMentioned && shouldMention {
 			t.Fatalf("should've mentioned @here with \"%v\"", message)
@@ -573,7 +601,7 @@ func TestGetExplicitMentionsAtHere(t *testing.T) {
 
 	// mentioning @here and someone
 	id := model.NewId()
-	if m := GetExplicitMentions("@here @user @potential", map[string][]string{"@user": {id}}); !m.HereMentioned {
+	if m := GetExplicitMentions(&model.Post{Message: "@here @user @potential"}, map[string][]string{"@user": {id}}); !m.HereMentioned {
 		t.Fatal("should've mentioned @here with \"@here @user\"")
 	} else if len(m.MentionedUserIds) != 1 || !m.MentionedUserIds[id] {
 		t.Fatal("should've mentioned @user with \"@here @user\"")
@@ -1088,11 +1116,12 @@ func TestGetDirectMessageNotificationEmailSubject(t *testing.T) {
 	defer th.TearDown()
 
 	expectedPrefix := "[http://localhost:8065] New Direct Message from @sender on"
+	user := &model.User{}
 	post := &model.Post{
 		CreateAt: 1501804801000,
 	}
 	translateFunc := utils.GetUserTranslations("en")
-	subject := getDirectMessageNotificationEmailSubject(post, translateFunc, "http://localhost:8065", "sender")
+	subject := getDirectMessageNotificationEmailSubject(user, post, translateFunc, "http://localhost:8065", "sender", true)
 	if !strings.HasPrefix(subject, expectedPrefix) {
 		t.Fatal("Expected subject line prefix '" + expectedPrefix + "', got " + subject)
 	}
@@ -1103,12 +1132,13 @@ func TestGetGroupMessageNotificationEmailSubjectFull(t *testing.T) {
 	defer th.TearDown()
 
 	expectedPrefix := "[http://localhost:8065] New Group Message in sender on"
+	user := &model.User{}
 	post := &model.Post{
 		CreateAt: 1501804801000,
 	}
 	translateFunc := utils.GetUserTranslations("en")
 	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_FULL
-	subject := getGroupMessageNotificationEmailSubject(post, translateFunc, "http://localhost:8065", "sender", emailNotificationContentsType)
+	subject := getGroupMessageNotificationEmailSubject(user, post, translateFunc, "http://localhost:8065", "sender", emailNotificationContentsType, true)
 	if !strings.HasPrefix(subject, expectedPrefix) {
 		t.Fatal("Expected subject line prefix '" + expectedPrefix + "', got " + subject)
 	}
@@ -1119,12 +1149,13 @@ func TestGetGroupMessageNotificationEmailSubjectGeneric(t *testing.T) {
 	defer th.TearDown()
 
 	expectedPrefix := "[http://localhost:8065] New Group Message on"
+	user := &model.User{}
 	post := &model.Post{
 		CreateAt: 1501804801000,
 	}
 	translateFunc := utils.GetUserTranslations("en")
 	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_GENERIC
-	subject := getGroupMessageNotificationEmailSubject(post, translateFunc, "http://localhost:8065", "sender", emailNotificationContentsType)
+	subject := getGroupMessageNotificationEmailSubject(user, post, translateFunc, "http://localhost:8065", "sender", emailNotificationContentsType, true)
 	if !strings.HasPrefix(subject, expectedPrefix) {
 		t.Fatal("Expected subject line prefix '" + expectedPrefix + "', got " + subject)
 	}
@@ -1135,11 +1166,12 @@ func TestGetNotificationEmailSubject(t *testing.T) {
 	defer th.TearDown()
 
 	expectedPrefix := "[http://localhost:8065] Notification in team on"
+	user := &model.User{}
 	post := &model.Post{
 		CreateAt: 1501804801000,
 	}
 	translateFunc := utils.GetUserTranslations("en")
-	subject := getNotificationEmailSubject(post, translateFunc, "http://localhost:8065", "team")
+	subject := getNotificationEmailSubject(user, post, translateFunc, "http://localhost:8065", "team", true)
 	if !strings.HasPrefix(subject, expectedPrefix) {
 		t.Fatal("Expected subject line prefix '" + expectedPrefix + "', got " + subject)
 	}
@@ -1164,7 +1196,7 @@ func TestGetNotificationEmailBodyFullNotificationPublicChannel(t *testing.T) {
 	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_FULL
 	translateFunc := utils.GetUserTranslations("en")
 
-	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
+	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, true, translateFunc)
 	if !strings.Contains(body, "You have a new notification.") {
 		t.Fatal("Expected email text 'You have a new notification. Got " + body)
 	}
@@ -1201,7 +1233,7 @@ func TestGetNotificationEmailBodyFullNotificationGroupChannel(t *testing.T) {
 	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_FULL
 	translateFunc := utils.GetUserTranslations("en")
 
-	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
+	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, true, translateFunc)
 	if !strings.Contains(body, "You have a new Group Message.") {
 		t.Fatal("Expected email text 'You have a new Group Message. Got " + body)
 	}
@@ -1238,7 +1270,7 @@ func TestGetNotificationEmailBodyFullNotificationPrivateChannel(t *testing.T) {
 	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_FULL
 	translateFunc := utils.GetUserTranslations("en")
 
-	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
+	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, true, translateFunc)
 	if !strings.Contains(body, "You have a new notification.") {
 		t.Fatal("Expected email text 'You have a new notification. Got " + body)
 	}
@@ -1275,7 +1307,7 @@ func TestGetNotificationEmailBodyFullNotificationDirectChannel(t *testing.T) {
 	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_FULL
 	translateFunc := utils.GetUserTranslations("en")
 
-	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
+	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, true, translateFunc)
 	if !strings.Contains(body, "You have a new Direct Message.") {
 		t.Fatal("Expected email text 'You have a new Direct Message. Got " + body)
 	}
@@ -1287,6 +1319,143 @@ func TestGetNotificationEmailBodyFullNotificationDirectChannel(t *testing.T) {
 	}
 	if !strings.Contains(body, teamURL) {
 		t.Fatal("Expected email text '" + teamURL + "'. Got " + body)
+	}
+}
+
+func TestGetNotificationEmailBodyFullNotificationLocaleTimeWithTimezone(t *testing.T) {
+	th := Setup()
+	defer th.TearDown()
+
+	recipient := &model.User{
+		Timezone: model.DefaultUserTimezone(),
+	}
+	recipient.Timezone["automaticTimezone"] = "America/New_York"
+	post := &model.Post{
+		CreateAt: 1524663790000,
+		Message:  "This is the message",
+	}
+	channel := &model.Channel{
+		DisplayName: "ChannelName",
+		Type:        model.CHANNEL_DIRECT,
+	}
+	channelName := "ChannelName"
+	senderName := "sender"
+	teamName := "team"
+	teamURL := "http://localhost:8065/" + teamName
+	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_FULL
+	translateFunc := utils.GetUserTranslations("en")
+
+	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, false, translateFunc)
+	r, _ := regexp.Compile("E([S|D]+)T")
+	zone := r.FindString(body)
+	if !strings.Contains(body, "sender - 9:43 AM "+zone+", April 25") {
+		t.Fatal("Expected email text 'sender - 9:43 AM " + zone + ", April 25'. Got " + body)
+	}
+}
+
+func TestGetNotificationEmailBodyFullNotificationLocaleTimeNoTimezone(t *testing.T) {
+	th := Setup()
+	defer th.TearDown()
+
+	recipient := &model.User{
+		Timezone: model.DefaultUserTimezone(),
+	}
+	post := &model.Post{
+		CreateAt: 1524681000000,
+		Message:  "This is the message",
+	}
+	channel := &model.Channel{
+		DisplayName: "ChannelName",
+		Type:        model.CHANNEL_DIRECT,
+	}
+	channelName := "ChannelName"
+	senderName := "sender"
+	teamName := "team"
+	teamURL := "http://localhost:8065/" + teamName
+	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_FULL
+	translateFunc := utils.GetUserTranslations("en")
+
+	tm := time.Unix(post.CreateAt/1000, 0)
+	zone, _ := tm.Zone()
+
+	formattedTime := formattedPostTime{
+		Time:     tm,
+		Year:     fmt.Sprintf("%d", tm.Year()),
+		Month:    translateFunc(tm.Month().String()),
+		Day:      fmt.Sprintf("%d", tm.Day()),
+		Hour:     fmt.Sprintf("%02d", tm.Hour()),
+		Minute:   fmt.Sprintf("%02d", tm.Minute()),
+		TimeZone: zone,
+	}
+
+	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, true, translateFunc)
+	postTimeLine := fmt.Sprintf("sender - %s:%s %s, %s %s", formattedTime.Hour, formattedTime.Minute, formattedTime.TimeZone, formattedTime.Month, formattedTime.Day)
+	if !strings.Contains(body, postTimeLine) {
+		t.Fatal("Expected email text '" + postTimeLine + " '. Got " + body)
+	}
+}
+
+func TestGetNotificationEmailBodyFullNotificationLocaleTime12Hour(t *testing.T) {
+	th := Setup()
+	defer th.TearDown()
+
+	recipient := &model.User{
+		Timezone: model.DefaultUserTimezone(),
+	}
+	recipient.Timezone["automaticTimezone"] = "America/New_York"
+	post := &model.Post{
+		CreateAt: 1524681000000, // 1524681000 // 1524681000000
+		Message:  "This is the message",
+	}
+	channel := &model.Channel{
+		DisplayName: "ChannelName",
+		Type:        model.CHANNEL_DIRECT,
+	}
+	channelName := "ChannelName"
+	senderName := "sender"
+	teamName := "team"
+	teamURL := "http://localhost:8065/" + teamName
+	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_FULL
+	translateFunc := utils.GetUserTranslations("en")
+
+	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, false, translateFunc)
+	if !strings.Contains(body, "sender - 2:30 PM") {
+		t.Fatal("Expected email text 'sender - 2:30 PM'. Got " + body)
+	}
+	if !strings.Contains(body, "April 25") {
+		t.Fatal("Expected email text 'April 25'. Got " + body)
+	}
+}
+
+func TestGetNotificationEmailBodyFullNotificationLocaleTime24Hour(t *testing.T) {
+	th := Setup()
+	defer th.TearDown()
+
+	recipient := &model.User{
+		Timezone: model.DefaultUserTimezone(),
+	}
+	recipient.Timezone["automaticTimezone"] = "America/New_York"
+	post := &model.Post{
+		CreateAt: 1524681000000,
+		Message:  "This is the message",
+	}
+	channel := &model.Channel{
+		DisplayName: "ChannelName",
+		Type:        model.CHANNEL_DIRECT,
+	}
+	channelName := "ChannelName"
+	senderName := "sender"
+	teamName := "team"
+	teamURL := "http://localhost:8065/" + teamName
+	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_FULL
+	translateFunc := utils.GetUserTranslations("en")
+
+	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, true, translateFunc)
+	if !strings.Contains(body, "sender - 14:30") {
+		t.Fatal("Expected email text 'sender - 14:30'. Got " + body)
+	}
+	if !strings.Contains(body, "April 25") {
+		t.Fatal("Expected email text 'April 25'. Got " + body)
 	}
 }
 
@@ -1310,7 +1479,7 @@ func TestGetNotificationEmailBodyGenericNotificationPublicChannel(t *testing.T) 
 	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_GENERIC
 	translateFunc := utils.GetUserTranslations("en")
 
-	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
+	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, true, translateFunc)
 	if !strings.Contains(body, "You have a new notification from @"+senderName) {
 		t.Fatal("Expected email text 'You have a new notification from @" + senderName + "'. Got " + body)
 	}
@@ -1344,7 +1513,7 @@ func TestGetNotificationEmailBodyGenericNotificationGroupChannel(t *testing.T) {
 	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_GENERIC
 	translateFunc := utils.GetUserTranslations("en")
 
-	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
+	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, true, translateFunc)
 	if !strings.Contains(body, "You have a new Group Message from @"+senderName) {
 		t.Fatal("Expected email text 'You have a new Group Message from @" + senderName + "'. Got " + body)
 	}
@@ -1378,7 +1547,7 @@ func TestGetNotificationEmailBodyGenericNotificationPrivateChannel(t *testing.T)
 	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_GENERIC
 	translateFunc := utils.GetUserTranslations("en")
 
-	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
+	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, true, translateFunc)
 	if !strings.Contains(body, "You have a new notification from @"+senderName) {
 		t.Fatal("Expected email text 'You have a new notification from @" + senderName + "'. Got " + body)
 	}
@@ -1412,7 +1581,7 @@ func TestGetNotificationEmailBodyGenericNotificationDirectChannel(t *testing.T) 
 	emailNotificationContentsType := model.EMAIL_NOTIFICATION_CONTENTS_GENERIC
 	translateFunc := utils.GetUserTranslations("en")
 
-	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, translateFunc)
+	body := th.App.getNotificationEmailBody(recipient, post, channel, channelName, senderName, teamName, teamURL, emailNotificationContentsType, true, translateFunc)
 	if !strings.Contains(body, "You have a new Direct Message from @"+senderName) {
 		t.Fatal("Expected email text 'You have a new Direct Message from @" + senderName + "'. Got " + body)
 	}
@@ -1786,4 +1955,38 @@ func TestGetPushNotificationMessage(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetMentionsEnabledFields(t *testing.T) {
+
+	attachmentWithTextAndPreText := model.SlackAttachment{
+		Text: "@here with mentions",
+		Pretext: "@Channel some comment for the channel",
+
+	}
+
+	attachmentWithOutPreText := model.SlackAttachment{
+		Text: "some text",
+	}
+	attachments := []*model.SlackAttachment{
+		&attachmentWithTextAndPreText,
+		&attachmentWithOutPreText,
+	}
+
+	post := &model.Post{
+		Message: "This is the message",
+		Props: model.StringInterface{
+			"attachments": attachments,
+		},
+	}
+	expectedFields := []string{
+		"This is the message",
+		"@Channel some comment for the channel",
+		"@here with mentions",
+		"some text"}
+
+	mentionEnabledFields := GetMentionsEnabledFields(post)
+
+	assert.EqualValues(t, 4, len(mentionEnabledFields))
+	assert.EqualValues(t, expectedFields, mentionEnabledFields)
 }

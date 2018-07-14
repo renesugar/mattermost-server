@@ -11,6 +11,7 @@ import (
 
 	"github.com/mattermost/mattermost-server/mlog"
 	"github.com/mattermost/mattermost-server/model"
+	"github.com/mattermost/mattermost-server/plugin"
 	"github.com/mattermost/mattermost-server/store"
 	"github.com/mattermost/mattermost-server/utils"
 )
@@ -183,6 +184,16 @@ func (a *App) CreateChannel(channel *model.Channel, addMember bool) (*model.Chan
 			a.InvalidateCacheForUser(channel.CreatorId)
 		}
 
+		if a.PluginsReady() {
+			a.Go(func() {
+				pluginContext := &plugin.Context{}
+				a.Plugins.RunMultiPluginHook(func(hooks plugin.Hooks) bool {
+					hooks.ChannelHasBeenCreated(pluginContext, sc)
+					return true
+				}, plugin.ChannelHasBeenCreatedId)
+			})
+		}
+
 		return sc, nil
 	}
 }
@@ -199,6 +210,16 @@ func (a *App) CreateDirectChannel(userId string, otherUserId string) (*model.Cha
 
 		a.InvalidateCacheForUser(userId)
 		a.InvalidateCacheForUser(otherUserId)
+
+		if a.PluginsReady() {
+			a.Go(func() {
+				pluginContext := &plugin.Context{}
+				a.Plugins.RunMultiPluginHook(func(hooks plugin.Hooks) bool {
+					hooks.ChannelHasBeenCreated(pluginContext, channel)
+					return true
+				}, plugin.ChannelHasBeenCreatedId)
+			})
+		}
 
 		message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_DIRECT_ADDED, "", channel.Id, "", nil)
 		message.Add("teammate_id", otherUserId)
@@ -340,6 +361,30 @@ func (a *App) createGroupChannel(userIds []string, creatorId string) (*model.Cha
 	}
 }
 
+func (a *App) GetGroupChannel(userIds []string) (*model.Channel, *model.AppError) {
+	if len(userIds) > model.CHANNEL_GROUP_MAX_USERS || len(userIds) < model.CHANNEL_GROUP_MIN_USERS {
+		return nil, model.NewAppError("GetGroupChannel", "api.channel.create_group.bad_size.app_error", nil, "", http.StatusBadRequest)
+	}
+
+	var users []*model.User
+	if result := <-a.Srv.Store.User().GetProfileByIds(userIds, true); result.Err != nil {
+		return nil, result.Err
+	} else {
+		users = result.Data.([]*model.User)
+	}
+
+	if len(users) != len(userIds) {
+		return nil, model.NewAppError("GetGroupChannel", "api.channel.create_group.bad_user.app_error", nil, "user_ids="+model.ArrayToJson(userIds), http.StatusBadRequest)
+	}
+
+	channel, err := a.GetChannelByName(model.GetGroupNameFromUserIds(userIds), "")
+	if err != nil {
+		return nil, err
+	}
+
+	return channel, nil
+}
+
 func (a *App) UpdateChannel(channel *model.Channel) (*model.Channel, *model.AppError) {
 	if result := <-a.Srv.Store.Channel().Update(channel); result.Err != nil {
 		return nil, result.Err
@@ -397,13 +442,13 @@ func (a *App) UpdateChannelPrivacy(oldChannel *model.Channel, user *model.User) 
 }
 
 func (a *App) postChannelPrivacyMessage(user *model.User, channel *model.Channel) *model.AppError {
-	privacy := (map[string]string{
-		model.CHANNEL_OPEN:    "private_to_public",
-		model.CHANNEL_PRIVATE: "public_to_private",
+	message := (map[string]string{
+		model.CHANNEL_OPEN:    utils.T("api.channel.change_channel_privacy.private_to_public"),
+		model.CHANNEL_PRIVATE: utils.T("api.channel.change_channel_privacy.public_to_private"),
 	})[channel.Type]
 	post := &model.Post{
 		ChannelId: channel.Id,
-		Message:   utils.T("api.channel.change_channel_privacy." + privacy),
+		Message:   message,
 		Type:      model.POST_CHANGE_CHANNEL_PRIVACY,
 		UserId:    user.Id,
 		Props: model.StringInterface{
@@ -774,6 +819,16 @@ func (a *App) AddChannelMember(userId string, channel *model.Channel, userReques
 		return nil, err
 	}
 
+	if a.PluginsReady() {
+		a.Go(func() {
+			pluginContext := &plugin.Context{}
+			a.Plugins.RunMultiPluginHook(func(hooks plugin.Hooks) bool {
+				hooks.UserHasJoinedChannel(pluginContext, cm, userRequestor)
+				return true
+			}, plugin.UserHasJoinedChannelId)
+		})
+	}
+
 	if userRequestorId == "" || userId == userRequestorId {
 		a.postJoinChannelMessage(user, channel)
 	} else {
@@ -1104,8 +1159,19 @@ func (a *App) JoinChannel(channel *model.Channel, userId string) *model.AppError
 		user := uresult.Data.(*model.User)
 
 		if channel.Type == model.CHANNEL_OPEN {
-			if _, err := a.AddUserToChannel(user, channel); err != nil {
+			cm, err := a.AddUserToChannel(user, channel)
+			if err != nil {
 				return err
+			}
+
+			if a.PluginsReady() {
+				a.Go(func() {
+					pluginContext := &plugin.Context{}
+					a.Plugins.RunMultiPluginHook(func(hooks plugin.Hooks) bool {
+						hooks.UserHasJoinedChannel(pluginContext, cm, nil)
+						return true
+					}, plugin.UserHasJoinedChannelId)
+				})
 			}
 
 			if err := a.postJoinChannelMessage(user, channel); err != nil {
@@ -1288,6 +1354,11 @@ func (a *App) removeUserFromChannel(userIdToRemove string, removerUserId string,
 		return model.NewAppError("RemoveUserFromChannel", "api.channel.remove.default.app_error", map[string]interface{}{"Channel": model.DEFAULT_CHANNEL}, "", http.StatusBadRequest)
 	}
 
+	cm, err := a.GetChannelMember(channel.Id, userIdToRemove)
+	if err != nil {
+		return err
+	}
+
 	if cmresult := <-a.Srv.Store.Channel().RemoveMember(channel.Id, userIdToRemove); cmresult.Err != nil {
 		return cmresult.Err
 	}
@@ -1297,6 +1368,22 @@ func (a *App) removeUserFromChannel(userIdToRemove string, removerUserId string,
 
 	a.InvalidateCacheForUser(userIdToRemove)
 	a.InvalidateCacheForChannelMembers(channel.Id)
+
+	if a.PluginsReady() {
+
+		var actorUser *model.User
+		if removerUserId != "" {
+			actorUser, err = a.GetUser(removerUserId)
+		}
+
+		a.Go(func() {
+			pluginContext := &plugin.Context{}
+			a.Plugins.RunMultiPluginHook(func(hooks plugin.Hooks) bool {
+				hooks.UserHasLeftChannel(pluginContext, cm, actorUser)
+				return true
+			}, plugin.UserHasLeftChannelId)
+		})
+	}
 
 	message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_USER_REMOVED, "", channel.Id, "", nil)
 	message.Add("user_id", userIdToRemove)
@@ -1314,6 +1401,7 @@ func (a *App) removeUserFromChannel(userIdToRemove string, removerUserId string,
 
 func (a *App) RemoveUserFromChannel(userIdToRemove string, removerUserId string, channel *model.Channel) *model.AppError {
 	var err *model.AppError
+
 	if err = a.removeUserFromChannel(userIdToRemove, removerUserId, channel); err != nil {
 		return err
 	}
@@ -1326,6 +1414,11 @@ func (a *App) RemoveUserFromChannel(userIdToRemove string, removerUserId string,
 	if userIdToRemove == removerUserId {
 		a.postLeaveChannelMessage(user, channel)
 	} else {
+
+		if err != nil {
+			return err
+		}
+
 		a.Go(func() {
 			a.postRemoveFromChannelMessage(removerUserId, user, channel)
 		})
@@ -1590,4 +1683,68 @@ func (a *App) ToggleMuteChannel(channelId string, userId string) *model.ChannelM
 
 	a.Srv.Store.Channel().UpdateMember(member)
 	return member
+}
+
+func (a *App) FillInChannelProps(channel *model.Channel) *model.AppError {
+	return a.FillInChannelsProps(&model.ChannelList{channel})
+}
+
+func (a *App) FillInChannelsProps(channelList *model.ChannelList) *model.AppError {
+	// Group the channels by team and call GetChannelsByNames just once per team.
+	channelsByTeam := make(map[string]model.ChannelList)
+	for _, channel := range *channelList {
+		channelsByTeam[channel.TeamId] = append(channelsByTeam[channel.TeamId], channel)
+	}
+
+	for teamId, channelList := range channelsByTeam {
+		allChannelMentions := make(map[string]bool)
+		channelMentions := make(map[*model.Channel][]string, len(channelList))
+
+		// Collect mentions across the channels so as to query just once for this team.
+		for _, channel := range channelList {
+			channelMentions[channel] = model.ChannelMentions(channel.Header)
+
+			for _, channelMention := range channelMentions[channel] {
+				allChannelMentions[channelMention] = true
+			}
+		}
+
+		allChannelMentionNames := make([]string, 0, len(allChannelMentions))
+		for channelName := range allChannelMentions {
+			allChannelMentionNames = append(allChannelMentionNames, channelName)
+		}
+
+		if len(allChannelMentionNames) > 0 {
+			mentionedChannels, err := a.GetChannelsByNames(allChannelMentionNames, teamId)
+			if err != nil {
+				return err
+			}
+
+			mentionedChannelsByName := make(map[string]*model.Channel)
+			for _, channel := range mentionedChannels {
+				mentionedChannelsByName[channel.Name] = channel
+			}
+
+			for _, channel := range channelList {
+				channelMentionsProp := make(map[string]interface{}, len(channelMentions[channel]))
+				for _, channelMention := range channelMentions[channel] {
+					if mentioned, ok := mentionedChannelsByName[channelMention]; ok {
+						if mentioned.Type == model.CHANNEL_OPEN {
+							channelMentionsProp[mentioned.Name] = map[string]interface{}{
+								"display_name": mentioned.DisplayName,
+							}
+						}
+					}
+				}
+
+				if len(channelMentionsProp) > 0 {
+					channel.AddProp("channel_mentions", channelMentionsProp)
+				} else if channel.Props != nil {
+					delete(channel.Props, "channel_mentions")
+				}
+			}
+		}
+	}
+
+	return nil
 }

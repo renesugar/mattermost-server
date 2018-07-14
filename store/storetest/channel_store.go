@@ -55,6 +55,7 @@ func TestChannelStore(t *testing.T, ss store.Store) {
 	t.Run("GetChannelsByScheme", func(t *testing.T) { testChannelStoreGetChannelsByScheme(t, ss) })
 	t.Run("MigrateChannelMembers", func(t *testing.T) { testChannelStoreMigrateChannelMembers(t, ss) })
 	t.Run("ResetAllChannelSchemes", func(t *testing.T) { testResetAllChannelSchemes(t, ss) })
+	t.Run("ClearAllCustomRoleAssignments", func(t *testing.T) { testChannelStoreClearAllCustomRoleAssignments(t, ss) })
 
 }
 
@@ -1707,6 +1708,14 @@ func testChannelStoreSearchMore(t *testing.T, ss store.Store) {
 	o8.Type = model.CHANNEL_PRIVATE
 	store.Must(ss.Channel().Save(&o8, -1))
 
+	o9 := model.Channel{}
+	o9.TeamId = o1.TeamId
+	o9.DisplayName = "Channel With Purpose"
+	o9.Purpose = "This can now be searchable!"
+	o9.Name = "with-purpose"
+	o9.Type = model.CHANNEL_OPEN
+	store.Must(ss.Channel().Save(&o9, -1))
+
 	if result := <-ss.Channel().SearchMore(m1.UserId, o1.TeamId, "ChannelA"); result.Err != nil {
 		t.Fatal(result.Err)
 	} else {
@@ -1768,6 +1777,19 @@ func testChannelStoreSearchMore(t *testing.T, ss store.Store) {
 		}
 
 		if (*channels)[0].Name != o6.Name {
+			t.Fatal("wrong channel returned")
+		}
+	}
+
+	if result := <-ss.Channel().SearchMore(m1.UserId, o1.TeamId, "now searchable"); result.Err != nil {
+		t.Fatal(result.Err)
+	} else {
+		channels := result.Data.(*model.ChannelList)
+		if len(*channels) != 1 {
+			t.Fatal("should return 1 channel")
+		}
+
+		if (*channels)[0].Name != o9.Name {
 			t.Fatal("wrong channel returned")
 		}
 	}
@@ -1883,6 +1905,14 @@ func testChannelStoreSearchInTeam(t *testing.T, ss store.Store) {
 	o11.Type = model.CHANNEL_OPEN
 	store.Must(ss.Channel().Save(&o11, -1))
 
+	o12 := model.Channel{}
+	o12.TeamId = o1.TeamId
+	o12.DisplayName = "Channel With Purpose"
+	o12.Purpose = "This can now be searchable!"
+	o12.Name = "with-purpose"
+	o12.Type = model.CHANNEL_OPEN
+	store.Must(ss.Channel().Save(&o12, -1))
+
 	for name, search := range map[string]func(teamId string, term string) store.StoreChannel{
 		"AutocompleteInTeam": ss.Channel().AutocompleteInTeam,
 		"SearchInTeam":       ss.Channel().SearchInTeam,
@@ -1982,6 +2012,32 @@ func testChannelStoreSearchInTeam(t *testing.T, ss store.Store) {
 				}
 
 				if (*channels)[0].Name != o11.Name {
+					t.Fatal("wrong channel returned")
+				}
+			}
+
+			if result := <-search(o1.TeamId, "now searchable"); result.Err != nil {
+				t.Fatal(result.Err)
+			} else {
+				channels := result.Data.(*model.ChannelList)
+				if len(*channels) != 1 {
+					t.Fatal("should return 1 channel")
+				}
+
+				if (*channels)[0].Name != o12.Name {
+					t.Fatal("wrong channel returned")
+				}
+			}
+
+			if result := <-search(o1.TeamId, "town square |"); result.Err != nil {
+				t.Fatal(result.Err)
+			} else {
+				channels := result.Data.(*model.ChannelList)
+				if len(*channels) != 1 {
+					t.Fatal("should return 1 channel")
+				}
+
+				if (*channels)[0].Name != o9.Name {
 					t.Fatal("wrong channel returned")
 				}
 			}
@@ -2357,4 +2413,63 @@ func testResetAllChannelSchemes(t *testing.T, ss store.Store) {
 
 	assert.Equal(t, "", *c1.SchemeId)
 	assert.Equal(t, "", *c2.SchemeId)
+}
+
+func testChannelStoreClearAllCustomRoleAssignments(t *testing.T, ss store.Store) {
+	c := &model.Channel{
+		TeamId:      model.NewId(),
+		DisplayName: "Name",
+		Name:        model.NewId(),
+		Type:        model.CHANNEL_OPEN,
+	}
+
+	c = (<-ss.Channel().Save(c, 100)).Data.(*model.Channel)
+
+	m1 := &model.ChannelMember{
+		ChannelId:     c.Id,
+		UserId:        model.NewId(),
+		NotifyProps:   model.GetDefaultChannelNotifyProps(),
+		ExplicitRoles: "channel_user channel_admin system_user_access_token",
+	}
+	m2 := &model.ChannelMember{
+		ChannelId:     c.Id,
+		UserId:        model.NewId(),
+		NotifyProps:   model.GetDefaultChannelNotifyProps(),
+		ExplicitRoles: "channel_user custom_role channel_admin another_custom_role",
+	}
+	m3 := &model.ChannelMember{
+		ChannelId:     c.Id,
+		UserId:        model.NewId(),
+		NotifyProps:   model.GetDefaultChannelNotifyProps(),
+		ExplicitRoles: "channel_user",
+	}
+	m4 := &model.ChannelMember{
+		ChannelId:     c.Id,
+		UserId:        model.NewId(),
+		NotifyProps:   model.GetDefaultChannelNotifyProps(),
+		ExplicitRoles: "custom_only",
+	}
+
+	store.Must(ss.Channel().SaveMember(m1))
+	store.Must(ss.Channel().SaveMember(m2))
+	store.Must(ss.Channel().SaveMember(m3))
+	store.Must(ss.Channel().SaveMember(m4))
+
+	require.Nil(t, (<-ss.Channel().ClearAllCustomRoleAssignments()).Err)
+
+	r1 := <-ss.Channel().GetMember(m1.ChannelId, m1.UserId)
+	require.Nil(t, r1.Err)
+	assert.Equal(t, m1.ExplicitRoles, r1.Data.(*model.ChannelMember).Roles)
+
+	r2 := <-ss.Channel().GetMember(m2.ChannelId, m2.UserId)
+	require.Nil(t, r2.Err)
+	assert.Equal(t, "channel_user channel_admin", r2.Data.(*model.ChannelMember).Roles)
+
+	r3 := <-ss.Channel().GetMember(m3.ChannelId, m3.UserId)
+	require.Nil(t, r3.Err)
+	assert.Equal(t, m3.ExplicitRoles, r3.Data.(*model.ChannelMember).Roles)
+
+	r4 := <-ss.Channel().GetMember(m4.ChannelId, m4.UserId)
+	require.Nil(t, r4.Err)
+	assert.Equal(t, "", r4.Data.(*model.ChannelMember).Roles)
 }

@@ -29,10 +29,17 @@ import (
 type Server struct {
 	Store           store.Store
 	WebSocketRouter *WebSocketRouter
-	Router          *mux.Router
-	Server          *http.Server
-	ListenAddr      *net.TCPAddr
-	RateLimiter     *RateLimiter
+
+	// RootRouter is the starting point for all HTTP requests to the server.
+	RootRouter *mux.Router
+
+	// Router is the starting point for all web, api4 and ws requests to the server. It differs
+	// from RootRouter only if the SiteURL contains a /subpath.
+	Router *mux.Router
+
+	Server      *http.Server
+	ListenAddr  *net.TCPAddr
+	RateLimiter *RateLimiter
 
 	didFinishListen chan struct{}
 }
@@ -85,21 +92,29 @@ func (cw *CorsWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 const TIME_TO_WAIT_FOR_CONNECTIONS_TO_CLOSE_ON_SERVER_SHUTDOWN = time.Second
 
-func redirectHTTPToHTTPS(w http.ResponseWriter, r *http.Request) {
-	if r.Host == "" {
-		http.Error(w, "Not Found", http.StatusNotFound)
+// golang.org/x/crypto/acme/autocert/autocert.go
+func handleHTTPRedirect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" && r.Method != "HEAD" {
+		http.Error(w, "Use HTTPS", http.StatusBadRequest)
+		return
 	}
+	target := "https://" + stripPort(r.Host) + r.URL.RequestURI()
+	http.Redirect(w, r, target, http.StatusFound)
+}
 
-	url := r.URL
-	url.Host = r.Host
-	url.Scheme = "https"
-	http.Redirect(w, r, url.String(), http.StatusFound)
+// golang.org/x/crypto/acme/autocert/autocert.go
+func stripPort(hostport string) string {
+	host, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return hostport
+	}
+	return net.JoinHostPort(host, "443")
 }
 
 func (a *App) StartServer() error {
 	mlog.Info("Starting Server...")
 
-	var handler http.Handler = &CorsWrapper{a.Config, a.Srv.Router}
+	var handler http.Handler = &CorsWrapper{a.Config, a.Srv.RootRouter}
 
 	if *a.Config().RateLimitSettings.Enable {
 		mlog.Info("RateLimiter is enabled")
@@ -175,7 +190,7 @@ func (a *App) StartServer() error {
 					defer redirectListener.Close()
 
 					server := &http.Server{
-						Handler:  handler,
+						Handler:  http.HandlerFunc(handleHTTPRedirect),
 						ErrorLog: a.Log.StdLog(mlog.String("source", "forwarder_server")),
 					}
 					server.Serve(redirectListener)

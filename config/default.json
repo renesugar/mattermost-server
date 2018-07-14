@@ -44,6 +44,9 @@
         "WebserverMode": "gzip",
         "EnableCustomEmoji": false,
         "EnableEmojiPicker": true,
+        "EnableGifPicker": false,
+        "GfycatApiKey": "2_KtH_W5",
+        "GfycatApiSecret": "3wLVZPiswc3DnaiaFoLkDvB4X0IV6CpMkj4tf2inJRsBY6-FnkT08zGmppWFgeof",
         "RestrictCustomEmojiCreation": "all",
         "RestrictPostDelete": "all",
         "AllowEditPost": "always",
@@ -64,7 +67,9 @@
         "ImageProxyOptions": "",
         "ImageProxyURL": "",
         "EnableAPITeamDeletion": false,
-        "ExperimentalEnableHardenedMode": false
+        "ExperimentalEnableHardenedMode": false,
+        "ExperimentalLimitClientConfig": false,
+        "EnableEmailInvitations": false
     },
     "TeamSettings": {
         "SiteName": "Mattermost",
@@ -115,6 +120,7 @@
         "DataSourceReplicas": [],
         "DataSourceSearchReplicas": [],
         "MaxIdleConns": 20,
+        "ConnMaxLifetimeMilliseconds": 3600000,
         "MaxOpenConns": 300,
         "Trace": false,
         "AtRestEncryptKey": "",
@@ -147,7 +153,7 @@
         "Directory": "./data/",
         "EnablePublicLink": false,
         "PublicLinkSalt": "",
-        "InitialFont": "luximbi.ttf",
+        "InitialFont": "nunito-bold.ttf",
         "AmazonS3AccessKeyId": "",
         "AmazonS3SecretAccessKey": "",
         "AmazonS3Bucket": "",
@@ -336,6 +342,10 @@
         "Enable": false,
         "BlockProfileRate": 0,
         "ListenAddress": ":8067"
+    },
+    "ExperimentalSettings": {
+        "ClientSideCertEnable": false,
+        "ClientSideCertCheck": "secondary"
     },
     "AnalyticsSettings": {
         "MaxUsersForStatistics": 2500

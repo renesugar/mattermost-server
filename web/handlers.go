@@ -68,7 +68,9 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	c.SetSiteURLHeader(app.GetProtocol(r) + "://" + r.Host)
+	subpath, _ := utils.GetSubpathFromConfig(c.App.Config())
+	siteURLHeader := app.GetProtocol(r) + "://" + r.Host + subpath
+	c.SetSiteURLHeader(siteURLHeader)
 
 	w.Header().Set(model.HEADER_REQUEST_ID, c.RequestId)
 	w.Header().Set(model.HEADER_VERSION_ID, fmt.Sprintf("%v.%v.%v.%v", model.CurrentVersion, model.BuildNumber, c.App.ClientConfigHash(), c.App.License() != nil))
@@ -157,8 +159,12 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			c.Err.IsOAuth = false
 		}
 
-		w.WriteHeader(c.Err.StatusCode)
-		w.Write([]byte(c.Err.ToJson()))
+		if IsApiCall(c.App, r) || IsWebhookCall(c.App, r) || len(r.Header.Get("X-Mobile-App")) > 0 {
+			w.WriteHeader(c.Err.StatusCode)
+			w.Write([]byte(c.Err.ToJson()))
+		} else {
+			utils.RenderWebAppError(c.App.Config(), w, r, c.Err, c.App.AsymmetricSigningKey())
+		}
 
 		if c.App.Metrics != nil {
 			c.App.Metrics.IncrementHttpError()

@@ -4,18 +4,17 @@
 package app
 
 import (
-	"encoding/json"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"time"
 
+	"testing"
+
 	"github.com/mattermost/mattermost-server/einterfaces"
 	"github.com/mattermost/mattermost-server/mlog"
 	"github.com/mattermost/mattermost-server/model"
-	"github.com/mattermost/mattermost-server/plugin"
-	"github.com/mattermost/mattermost-server/plugin/pluginenv"
 	"github.com/mattermost/mattermost-server/store"
 	"github.com/mattermost/mattermost-server/store/sqlstore"
 	"github.com/mattermost/mattermost-server/store/storetest"
@@ -34,7 +33,6 @@ type TestHelper struct {
 
 	tempConfigPath string
 	tempWorkspace  string
-	pluginHooks    map[string]plugin.Hooks
 }
 
 type persistentTestStore struct {
@@ -92,7 +90,6 @@ func setupTestHelper(enterprise bool) *TestHelper {
 
 	th := &TestHelper{
 		App:            a,
-		pluginHooks:    make(map[string]plugin.Hooks),
 		tempConfigPath: tempConfig.Name(),
 	}
 
@@ -121,6 +118,19 @@ func setupTestHelper(enterprise bool) *TestHelper {
 	} else {
 		th.App.SetLicense(nil)
 	}
+
+	if th.tempWorkspace == "" {
+		dir, err := ioutil.TempDir("", "apptest")
+		if err != nil {
+			panic(err)
+		}
+		th.tempWorkspace = dir
+	}
+
+	pluginDir := filepath.Join(th.tempWorkspace, "plugins")
+	webappDir := filepath.Join(th.tempWorkspace, "webapp")
+
+	th.App.InitPlugins(pluginDir, webappDir)
 
 	return th
 }
@@ -205,6 +215,10 @@ func (me *TestHelper) CreateChannel(team *model.Team) *model.Channel {
 	return me.createChannel(team, model.CHANNEL_OPEN)
 }
 
+func (me *TestHelper) CreatePrivateChannel(team *model.Team) *model.Channel {
+	return me.createChannel(team, model.CHANNEL_PRIVATE)
+}
+
 func (me *TestHelper) createChannel(team *model.Team, channelType string) *model.Channel {
 	id := model.NewId()
 
@@ -256,6 +270,20 @@ func (me *TestHelper) CreateDmChannel(user *model.User) *model.Channel {
 	var err *model.AppError
 	var channel *model.Channel
 	if channel, err = me.App.CreateDirectChannel(me.BasicUser.Id, user.Id); err != nil {
+		mlog.Error(err.Error())
+
+		time.Sleep(time.Second)
+		panic(err)
+	}
+	utils.EnableDebugLogForTest()
+	return channel
+}
+
+func (me *TestHelper) CreateGroupChannel(user1 *model.User, user2 *model.User) *model.Channel {
+	utils.DisableDebugLogForTest()
+	var err *model.AppError
+	var channel *model.Channel
+	if channel, err = me.App.CreateGroupChannel([]string{me.BasicUser.Id, user1.Id, user2.Id}, me.BasicUser.Id); err != nil {
 		mlog.Error(err.Error())
 
 		time.Sleep(time.Second)
@@ -363,65 +391,6 @@ func (me *TestHelper) TearDown() {
 	}
 }
 
-type mockPluginSupervisor struct {
-	hooks plugin.Hooks
-}
-
-func (s *mockPluginSupervisor) Start(api plugin.API) error {
-	return s.hooks.OnActivate(api)
-}
-
-func (s *mockPluginSupervisor) Wait() error {
-	return nil
-}
-
-func (s *mockPluginSupervisor) Stop() error {
-	return nil
-}
-
-func (s *mockPluginSupervisor) Hooks() plugin.Hooks {
-	return s.hooks
-}
-
-func (me *TestHelper) InstallPlugin(manifest *model.Manifest, hooks plugin.Hooks) {
-	if me.tempWorkspace == "" {
-		dir, err := ioutil.TempDir("", "apptest")
-		if err != nil {
-			panic(err)
-		}
-		me.tempWorkspace = dir
-	}
-
-	manifestCopy := *manifest
-	if manifestCopy.Backend == nil {
-		manifestCopy.Backend = &model.ManifestBackend{}
-	}
-	manifestBytes, err := json.Marshal(&manifestCopy)
-	if err != nil {
-		panic(err)
-	}
-
-	pluginDir := filepath.Join(me.tempWorkspace, "plugins")
-	webappDir := filepath.Join(me.tempWorkspace, "webapp")
-
-	if err := os.MkdirAll(filepath.Join(pluginDir, manifest.Id), 0700); err != nil {
-		panic(err)
-	}
-
-	if err := ioutil.WriteFile(filepath.Join(pluginDir, manifest.Id, "plugin.json"), manifestBytes, 0600); err != nil {
-		panic(err)
-	}
-
-	me.App.InitPlugins(pluginDir, webappDir, func(bundle *model.BundleInfo) (plugin.Supervisor, error) {
-		if hooks, ok := me.pluginHooks[bundle.Manifest.Id]; ok {
-			return &mockPluginSupervisor{hooks}, nil
-		}
-		return pluginenv.DefaultSupervisorProvider(bundle)
-	})
-
-	me.pluginHooks[manifest.Id] = hooks
-}
-
 func (me *TestHelper) ResetRoleMigration() {
 	if _, err := testStoreSqlSupplier.GetMaster().Exec("DELETE from Roles"); err != nil {
 		panic(err)
@@ -442,6 +411,54 @@ func (me *TestHelper) ResetEmojisMigration() {
 	testClusterInterface.sendClearRoleCacheMessage()
 
 	if _, err := testStoreSqlSupplier.GetMaster().Exec("DELETE from Systems where Name = :Name", map[string]interface{}{"Name": EMOJIS_PERMISSIONS_MIGRATION_KEY}); err != nil {
+		panic(err)
+	}
+}
+
+func (me *TestHelper) CheckTeamCount(t *testing.T, expected int64) {
+	if r := <-me.App.Srv.Store.Team().AnalyticsTeamCount(); r.Err == nil {
+		if r.Data.(int64) != expected {
+			t.Fatalf("Unexpected number of teams. Expected: %v, found: %v", expected, r.Data.(int64))
+		}
+	} else {
+		t.Fatalf("Failed to get team count.")
+	}
+}
+
+func (me *TestHelper) CheckChannelsCount(t *testing.T, expected int64) {
+	if r := <-me.App.Srv.Store.Channel().AnalyticsTypeCount("", model.CHANNEL_OPEN); r.Err == nil {
+		if r.Data.(int64) != expected {
+			t.Fatalf("Unexpected number of channels. Expected: %v, found: %v", expected, r.Data.(int64))
+		}
+	} else {
+		t.Fatalf("Failed to get channel count.")
+	}
+}
+
+func (me *TestHelper) SetupTeamScheme() *model.Scheme {
+	scheme := model.Scheme{
+		Name:        model.NewId(),
+		DisplayName: model.NewId(),
+		Scope:       model.SCHEME_SCOPE_TEAM,
+	}
+
+	if scheme, err := me.App.CreateScheme(&scheme); err == nil {
+		return scheme
+	} else {
+		panic(err)
+	}
+}
+
+func (me *TestHelper) SetupChannelScheme() *model.Scheme {
+	scheme := model.Scheme{
+		Name:        model.NewId(),
+		DisplayName: model.NewId(),
+		Scope:       model.SCHEME_SCOPE_CHANNEL,
+	}
+
+	if scheme, err := me.App.CreateScheme(&scheme); err == nil {
+		return scheme
+	} else {
 		panic(err)
 	}
 }

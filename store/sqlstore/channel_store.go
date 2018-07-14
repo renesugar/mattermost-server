@@ -298,7 +298,7 @@ func (s SqlChannelStore) CreateIndexesIfNotExists() {
 	s.CreateIndexIfNotExists("idx_channelmembers_channel_id", "ChannelMembers", "ChannelId")
 	s.CreateIndexIfNotExists("idx_channelmembers_user_id", "ChannelMembers", "UserId")
 
-	s.CreateFullTextIndexIfNotExists("idx_channels_txt", "Channels", "Name, DisplayName")
+	s.CreateFullTextIndexIfNotExists("idx_channel_search_txt", "Channels", "Name, DisplayName, Purpose")
 }
 
 func (s SqlChannelStore) Save(channel *model.Channel, maxChannelsPerTeam int64) store.StoreChannel {
@@ -1573,7 +1573,7 @@ func (s SqlChannelStore) SearchMore(userId string, teamId string, term string) s
 
 func (s SqlChannelStore) buildLIKEClause(term string) (likeClause, likeTerm string) {
 	likeTerm = term
-	searchColumns := "Name, DisplayName"
+	searchColumns := "Name, DisplayName, Purpose"
 
 	// These chars must be removed from the like query.
 	for _, c := range ignoreLikeSearchChar {
@@ -1608,7 +1608,7 @@ func (s SqlChannelStore) buildFulltextClause(term string) (fulltextClause, fullt
 	// Copy the terms as we will need to prepare them differently for each search type.
 	fulltextTerm = term
 
-	searchColumns := "Name, DisplayName"
+	searchColumns := "Name, DisplayName, Purpose"
 
 	// These chars must be treated as spaces in the fulltext query.
 	for _, c := range spaceFulltextSearchChar {
@@ -1617,6 +1617,8 @@ func (s SqlChannelStore) buildFulltextClause(term string) (fulltextClause, fullt
 
 	// Prepare the FULLTEXT portion of the query.
 	if s.DriverName() == model.DATABASE_DRIVER_POSTGRES {
+		fulltextTerm = strings.Replace(fulltextTerm, "|", "", -1)
+
 		splitTerm := strings.Fields(fulltextTerm)
 		for i, t := range strings.Fields(fulltextTerm) {
 			if i == len(splitTerm)-1 {
@@ -1733,8 +1735,12 @@ func (s SqlChannelStore) MigrateChannelMembers(fromChannelId string, fromUserId 
 		for _, member := range channelMembers {
 			roles := strings.Fields(member.Roles)
 			var newRoles []string
-			member.SchemeAdmin = sql.NullBool{Bool: false, Valid: true}
-			member.SchemeUser = sql.NullBool{Bool: false, Valid: true}
+			if !member.SchemeAdmin.Valid {
+				member.SchemeAdmin = sql.NullBool{Bool: false, Valid: true}
+			}
+			if !member.SchemeUser.Valid {
+				member.SchemeUser = sql.NullBool{Bool: false, Valid: true}
+			}
 			for _, role := range roles {
 				if role == model.CHANNEL_ADMIN_ROLE_ID {
 					member.SchemeAdmin = sql.NullBool{Bool: true, Valid: true}
@@ -1777,6 +1783,75 @@ func (s SqlChannelStore) ResetAllChannelSchemes() store.StoreChannel {
 	return store.Do(func(result *store.StoreResult) {
 		if _, err := s.GetMaster().Exec("UPDATE Channels SET SchemeId=''"); err != nil {
 			result.Err = model.NewAppError("SqlChannelStore.ResetAllChannelSchemes", "store.sql_channel.reset_all_channel_schemes.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+	})
+}
+
+func (s SqlChannelStore) ClearAllCustomRoleAssignments() store.StoreChannel {
+	return store.Do(func(result *store.StoreResult) {
+		builtInRoles := model.MakeDefaultRoles()
+		lastUserId := strings.Repeat("0", 26)
+		lastChannelId := strings.Repeat("0", 26)
+
+		for true {
+			var transaction *gorp.Transaction
+			var err error
+
+			if transaction, err = s.GetMaster().Begin(); err != nil {
+				result.Err = model.NewAppError("SqlChannelStore.ClearAllCustomRoleAssignments", "store.sql_channel.clear_all_custom_role_assignments.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			var channelMembers []*channelMember
+			if _, err := transaction.Select(&channelMembers, "SELECT * from ChannelMembers WHERE (ChannelId, UserId) > (:ChannelId, :UserId) ORDER BY ChannelId, UserId LIMIT 1000", map[string]interface{}{"ChannelId": lastChannelId, "UserId": lastUserId}); err != nil {
+				if err2 := transaction.Rollback(); err2 != nil {
+					result.Err = model.NewAppError("SqlChannelStore.ClearAllCustomRoleAssignments", "store.sql_channel.clear_all_custom_role_assignments.rollback_transaction.app_error", nil, err2.Error(), http.StatusInternalServerError)
+					return
+				}
+				result.Err = model.NewAppError("SqlChannelStore.ClearAllCustomRoleAssignments", "store.sql_channel.clear_all_custom_role_assignments.select.app_error", nil, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			if len(channelMembers) == 0 {
+				break
+			}
+
+			for _, member := range channelMembers {
+				lastUserId = member.UserId
+				lastChannelId = member.ChannelId
+
+				var newRoles []string
+
+				for _, role := range strings.Fields(member.Roles) {
+					for name := range builtInRoles {
+						if name == role {
+							newRoles = append(newRoles, role)
+							break
+						}
+					}
+				}
+
+				newRolesString := strings.Join(newRoles, " ")
+				if newRolesString != member.Roles {
+					if _, err := transaction.Exec("UPDATE ChannelMembers SET Roles = :Roles WHERE UserId = :UserId AND ChannelId = :ChannelId", map[string]interface{}{"Roles": newRolesString, "ChannelId": member.ChannelId, "UserId": member.UserId}); err != nil {
+						if err2 := transaction.Rollback(); err2 != nil {
+							result.Err = model.NewAppError("SqlChannelStore.ClearAllCustomRoleAssignments", "store.sql_channel.clear_all_custom_role_assignments.rollback_transaction.app_error", nil, err2.Error(), http.StatusInternalServerError)
+							return
+						}
+						result.Err = model.NewAppError("SqlChannelStore.ClearAllCustomRoleAssignments", "store.sql_channel.clear_all_custom_role_assignments.update.app_error", nil, err.Error(), http.StatusInternalServerError)
+						return
+					}
+				}
+			}
+
+			if err := transaction.Commit(); err != nil {
+				if err2 := transaction.Rollback(); err2 != nil {
+					result.Err = model.NewAppError("SqlChannelStore.ClearAllCustomRoleAssignments", "store.sql_channel.clear_all_custom_role_assignments.rollback_transaction.app_error", nil, err2.Error(), http.StatusInternalServerError)
+					return
+				}
+				result.Err = model.NewAppError("SqlChannelStore.ClearAllCustomRoleAssignments", "store.sql_channel.clear_all_custom_role_assignments.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 	})
 }

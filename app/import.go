@@ -26,12 +26,14 @@ import (
 
 type LineImportData struct {
 	Type          string                   `json:"type"`
+	Scheme        *SchemeImportData        `json:"scheme"`
 	Team          *TeamImportData          `json:"team"`
 	Channel       *ChannelImportData       `json:"channel"`
 	User          *UserImportData          `json:"user"`
 	Post          *PostImportData          `json:"post"`
 	DirectChannel *DirectChannelImportData `json:"direct_channel"`
 	DirectPost    *DirectPostImportData    `json:"direct_post"`
+	Emoji         *EmojiImportData         `json:"emoji"`
 	Version       *int                     `json:"version"`
 }
 
@@ -41,6 +43,7 @@ type TeamImportData struct {
 	Type            *string `json:"type"`
 	Description     *string `json:"description"`
 	AllowOpenInvite *bool   `json:"allow_open_invite"`
+	Scheme          *string `json:"scheme"`
 }
 
 type ChannelImportData struct {
@@ -50,6 +53,7 @@ type ChannelImportData struct {
 	Type        *string `json:"type"`
 	Header      *string `json:"header"`
 	Purpose     *string `json:"purpose"`
+	Scheme      *string `json:"scheme"`
 }
 
 type UserImportData struct {
@@ -111,6 +115,11 @@ type UserChannelNotifyPropsImportData struct {
 	MarkUnread *string `json:"mark_unread"`
 }
 
+type EmojiImportData struct {
+	Name  *string `json:"name"`
+	Image *string `json:"image"`
+}
+
 type ReactionImportData struct {
 	User      *string `json:"user"`
 	CreateAt  *int64  `json:"create_at"`
@@ -159,6 +168,24 @@ type DirectPostImportData struct {
 	Replies   *[]ReplyImportData    `json:"replies"`
 }
 
+type SchemeImportData struct {
+	Name                    *string         `json:"name"`
+	DisplayName             *string         `json:"display_name"`
+	Description             *string         `json:"description"`
+	Scope                   *string         `json:"scope"`
+	DefaultTeamAdminRole    *RoleImportData `json:"default_team_admin_role"`
+	DefaultTeamUserRole     *RoleImportData `json:"default_team_user_role"`
+	DefaultChannelAdminRole *RoleImportData `json:"default_channel_admin_role"`
+	DefaultChannelUserRole  *RoleImportData `json:"default_channel_user_role"`
+}
+
+type RoleImportData struct {
+	Name        *string   `json:"name"`
+	DisplayName *string   `json:"display_name"`
+	Description *string   `json:"description"`
+	Permissions *[]string `json:"permissions"`
+}
+
 type LineImportWorkerData struct {
 	LineImportData
 	LineNumber int
@@ -187,6 +214,9 @@ func (a *App) bulkImportWorker(dryRun bool, wg *sync.WaitGroup, lines <-chan Lin
 func (a *App) BulkImport(fileReader io.Reader, dryRun bool, workers int) (*model.AppError, int) {
 	scanner := bufio.NewScanner(fileReader)
 	lineNumber := 0
+
+	a.Srv.Store.LockToMaster()
+	defer a.Srv.Store.UnlockFromMaster()
 
 	errorsChan := make(chan LineImportWorkerError, (2*workers)+1) // size chosen to ensure it never gets filled up completely.
 	var wg sync.WaitGroup
@@ -271,6 +301,12 @@ func processImportDataFileVersionLine(line LineImportData) (int, *model.AppError
 
 func (a *App) ImportLine(line LineImportData, dryRun bool) *model.AppError {
 	switch {
+	case line.Type == "scheme":
+		if line.Scheme == nil {
+			return model.NewAppError("BulkImport", "app.import.import_line.null_scheme.error", nil, "", http.StatusBadRequest)
+		} else {
+			return a.ImportScheme(line.Scheme, dryRun)
+		}
 	case line.Type == "team":
 		if line.Team == nil {
 			return model.NewAppError("BulkImport", "app.import.import_line.null_team.error", nil, "", http.StatusBadRequest)
@@ -307,9 +343,214 @@ func (a *App) ImportLine(line LineImportData, dryRun bool) *model.AppError {
 		} else {
 			return a.ImportDirectPost(line.DirectPost, dryRun)
 		}
+	case line.Type == "emoji":
+		if line.Emoji == nil {
+			return model.NewAppError("BulkImport", "app.import.import_line.null_emoji.error", nil, "", http.StatusBadRequest)
+		} else {
+			return a.ImportEmoji(line.Emoji, dryRun)
+		}
 	default:
 		return model.NewAppError("BulkImport", "app.import.import_line.unknown_line_type.error", map[string]interface{}{"Type": line.Type}, "", http.StatusBadRequest)
 	}
+}
+
+func (a *App) ImportScheme(data *SchemeImportData, dryRun bool) *model.AppError {
+	if err := validateSchemeImportData(data); err != nil {
+		return err
+	}
+
+	// If this is a Dry Run, do not continue any further.
+	if dryRun {
+		return nil
+	}
+
+	scheme, err := a.GetSchemeByName(*data.Name)
+	if err != nil {
+		scheme = new(model.Scheme)
+	} else if scheme.Scope != *data.Scope {
+		return model.NewAppError("BulkImport", "app.import.import_scheme.scope_change.error", map[string]interface{}{"SchemeName": scheme.Name}, "", http.StatusBadRequest)
+	}
+
+	scheme.Name = *data.Name
+	scheme.DisplayName = *data.DisplayName
+	scheme.Scope = *data.Scope
+
+	if data.Description != nil {
+		scheme.Description = *data.Description
+	}
+
+	if len(scheme.Id) == 0 {
+		scheme, err = a.CreateScheme(scheme)
+	} else {
+		scheme, err = a.UpdateScheme(scheme)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if scheme.Scope == model.SCHEME_SCOPE_TEAM {
+		data.DefaultTeamAdminRole.Name = &scheme.DefaultTeamAdminRole
+		if err := a.ImportRole(data.DefaultTeamAdminRole, dryRun, true); err != nil {
+			return err
+		}
+
+		data.DefaultTeamUserRole.Name = &scheme.DefaultTeamUserRole
+		if err := a.ImportRole(data.DefaultTeamUserRole, dryRun, true); err != nil {
+			return err
+		}
+	}
+
+	if scheme.Scope == model.SCHEME_SCOPE_TEAM || scheme.Scope == model.SCHEME_SCOPE_CHANNEL {
+		data.DefaultChannelAdminRole.Name = &scheme.DefaultChannelAdminRole
+		if err := a.ImportRole(data.DefaultChannelAdminRole, dryRun, true); err != nil {
+			return err
+		}
+
+		data.DefaultChannelUserRole.Name = &scheme.DefaultChannelUserRole
+		if err := a.ImportRole(data.DefaultChannelUserRole, dryRun, true); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (a *App) ImportRole(data *RoleImportData, dryRun bool, isSchemeRole bool) *model.AppError {
+	if !isSchemeRole {
+		if err := validateRoleImportData(data); err != nil {
+			return err
+		}
+	}
+
+	// If this is a Dry Run, do not continue any further.
+	if dryRun {
+		return nil
+	}
+
+	role, err := a.GetRoleByName(*data.Name)
+	if err != nil {
+		role = new(model.Role)
+	}
+
+	role.Name = *data.Name
+
+	if data.DisplayName != nil {
+		role.DisplayName = *data.DisplayName
+	}
+
+	if data.Description != nil {
+		role.Description = *data.Description
+	}
+
+	if data.Permissions != nil {
+		role.Permissions = *data.Permissions
+	}
+
+	if isSchemeRole {
+		role.SchemeManaged = true
+	} else {
+		role.SchemeManaged = false
+	}
+
+	if len(role.Id) == 0 {
+		role, err = a.CreateRole(role)
+	} else {
+		role, err = a.UpdateRole(role)
+	}
+
+	return err
+}
+
+func validateSchemeImportData(data *SchemeImportData) *model.AppError {
+
+	if data.Scope == nil {
+		return model.NewAppError("BulkImport", "app.import.validate_scheme_import_data.null_scope.error", nil, "", http.StatusBadRequest)
+	}
+
+	switch *data.Scope {
+	case model.SCHEME_SCOPE_TEAM:
+		if data.DefaultTeamAdminRole == nil || data.DefaultTeamUserRole == nil || data.DefaultChannelAdminRole == nil || data.DefaultChannelUserRole == nil {
+			return model.NewAppError("BulkImport", "app.import.validate_scheme_import_data.wrong_roles_for_scope.error", nil, "", http.StatusBadRequest)
+		}
+	case model.SCHEME_SCOPE_CHANNEL:
+		if data.DefaultTeamAdminRole != nil || data.DefaultTeamUserRole != nil || data.DefaultChannelAdminRole == nil || data.DefaultChannelUserRole == nil {
+			return model.NewAppError("BulkImport", "app.import.validate_scheme_import_data.wrong_roles_for_scope.error", nil, "", http.StatusBadRequest)
+		}
+	default:
+		return model.NewAppError("BulkImport", "app.import.validate_scheme_import_data.unknown_scheme.error", nil, "", http.StatusBadRequest)
+	}
+
+	if data.Name == nil || !model.IsValidSchemeName(*data.Name) {
+		return model.NewAppError("BulkImport", "app.import.validate_scheme_import_data.name_invalid.error", nil, "", http.StatusBadRequest)
+	}
+
+	if data.DisplayName == nil || len(*data.DisplayName) == 0 || len(*data.DisplayName) > model.SCHEME_DISPLAY_NAME_MAX_LENGTH {
+		return model.NewAppError("BulkImport", "app.import.validate_scheme_import_data.display_name_invalid.error", nil, "", http.StatusBadRequest)
+	}
+
+	if data.Description != nil && len(*data.Description) > model.SCHEME_DESCRIPTION_MAX_LENGTH {
+		return model.NewAppError("BulkImport", "app.import.validate_scheme_import_data.description_invalid.error", nil, "", http.StatusBadRequest)
+	}
+
+	if data.DefaultTeamAdminRole != nil {
+		if err := validateRoleImportData(data.DefaultTeamAdminRole); err != nil {
+			return err
+		}
+	}
+
+	if data.DefaultTeamUserRole != nil {
+		if err := validateRoleImportData(data.DefaultTeamUserRole); err != nil {
+			return err
+		}
+	}
+
+	if data.DefaultChannelAdminRole != nil {
+		if err := validateRoleImportData(data.DefaultChannelAdminRole); err != nil {
+			return err
+		}
+	}
+
+	if data.DefaultChannelUserRole != nil {
+		if err := validateRoleImportData(data.DefaultChannelUserRole); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateRoleImportData(data *RoleImportData) *model.AppError {
+
+	if data.Name == nil || !model.IsValidRoleName(*data.Name) {
+		return model.NewAppError("BulkImport", "app.import.validate_role_import_data.name_invalid.error", nil, "", http.StatusBadRequest)
+	}
+
+	if data.DisplayName == nil || len(*data.DisplayName) == 0 || len(*data.DisplayName) > model.ROLE_DISPLAY_NAME_MAX_LENGTH {
+		return model.NewAppError("BulkImport", "app.import.validate_role_import_data.display_name_invalid.error", nil, "", http.StatusBadRequest)
+	}
+
+	if data.Description != nil && len(*data.Description) > model.ROLE_DESCRIPTION_MAX_LENGTH {
+		return model.NewAppError("BulkImport", "app.import.validate_role_import_data.description_invalid.error", nil, "", http.StatusBadRequest)
+	}
+
+	if data.Permissions != nil {
+		for _, permission := range *data.Permissions {
+			permissionValidated := false
+			for _, p := range model.ALL_PERMISSIONS {
+				if permission == p.Id {
+					permissionValidated = true
+					break
+				}
+			}
+
+			if !permissionValidated {
+				return model.NewAppError("BulkImport", "app.import.validate_role_import_data.invalid_permission.error", nil, "permission"+permission, http.StatusBadRequest)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (a *App) ImportTeam(data *TeamImportData, dryRun bool) *model.AppError {
@@ -341,12 +582,29 @@ func (a *App) ImportTeam(data *TeamImportData, dryRun bool) *model.AppError {
 		team.AllowOpenInvite = *data.AllowOpenInvite
 	}
 
+	if data.Scheme != nil {
+		scheme, err := a.GetSchemeByName(*data.Scheme)
+		if err != nil {
+			return err
+		}
+
+		if scheme.DeleteAt != 0 {
+			return model.NewAppError("BulkImport", "app.import.import_team.scheme_deleted.error", nil, "", http.StatusBadRequest)
+		}
+
+		if scheme.Scope != model.SCHEME_SCOPE_TEAM {
+			return model.NewAppError("BulkImport", "app.import.import_team.scheme_wrong_scope.error", nil, "", http.StatusBadRequest)
+		}
+
+		team.SchemeId = &scheme.Id
+	}
+
 	if team.Id == "" {
 		if _, err := a.CreateTeam(team); err != nil {
 			return err
 		}
 	} else {
-		if _, err := a.UpdateTeam(team); err != nil {
+		if _, err := a.updateTeamUnsanitized(team); err != nil {
 			return err
 		}
 	}
@@ -380,6 +638,10 @@ func validateTeamImportData(data *TeamImportData) *model.AppError {
 
 	if data.Description != nil && len(*data.Description) > model.TEAM_DESCRIPTION_MAX_LENGTH {
 		return model.NewAppError("BulkImport", "app.import.validate_team_import_data.description_length.error", nil, "", http.StatusBadRequest)
+	}
+
+	if data.Scheme != nil && !model.IsValidSchemeName(*data.Scheme) {
+		return model.NewAppError("BulkImport", "app.import.validate_team_import_data.scheme_invalid.error", nil, "", http.StatusBadRequest)
 	}
 
 	return nil
@@ -420,6 +682,23 @@ func (a *App) ImportChannel(data *ChannelImportData, dryRun bool) *model.AppErro
 
 	if data.Purpose != nil {
 		channel.Purpose = *data.Purpose
+	}
+
+	if data.Scheme != nil {
+		scheme, err := a.GetSchemeByName(*data.Scheme)
+		if err != nil {
+			return err
+		}
+
+		if scheme.DeleteAt != 0 {
+			return model.NewAppError("BulkImport", "app.import.import_channel.scheme_deleted.error", nil, "", http.StatusBadRequest)
+		}
+
+		if scheme.Scope != model.SCHEME_SCOPE_CHANNEL {
+			return model.NewAppError("BulkImport", "app.import.import_channel.scheme_wrong_scope.error", nil, "", http.StatusBadRequest)
+		}
+
+		channel.SchemeId = &scheme.Id
 	}
 
 	if channel.Id == "" {
@@ -467,6 +746,10 @@ func validateChannelImportData(data *ChannelImportData) *model.AppError {
 
 	if data.Purpose != nil && utf8.RuneCountInString(*data.Purpose) > model.CHANNEL_PURPOSE_MAX_RUNES {
 		return model.NewAppError("BulkImport", "app.import.validate_channel_import_data.purpose_length.error", nil, "", http.StatusBadRequest)
+	}
+
+	if data.Scheme != nil && !model.IsValidSchemeName(*data.Scheme) {
+		return model.NewAppError("BulkImport", "app.import.validate_channel_import_data.scheme_invalid.error", nil, "", http.StatusBadRequest)
 	}
 
 	return nil
@@ -791,10 +1074,24 @@ func (a *App) ImportUserTeams(user *model.User, data *[]UserTeamImportData) *mod
 		}
 
 		var roles string
+		isSchemeUser := true
+		isSchemeAdmin := false
+
 		if tdata.Roles == nil {
-			roles = model.TEAM_USER_ROLE_ID
+			isSchemeUser = true
 		} else {
-			roles = *tdata.Roles
+			rawRoles := *tdata.Roles
+			explicitRoles := []string{}
+			for _, role := range strings.Fields(rawRoles) {
+				if role == model.TEAM_USER_ROLE_ID {
+					isSchemeUser = true
+				} else if role == model.TEAM_ADMIN_ROLE_ID {
+					isSchemeAdmin = true
+				} else {
+					explicitRoles = append(explicitRoles, role)
+				}
+			}
+			roles = strings.Join(explicitRoles, " ")
 		}
 
 		var member *model.TeamMember
@@ -802,10 +1099,14 @@ func (a *App) ImportUserTeams(user *model.User, data *[]UserTeamImportData) *mod
 			return err
 		}
 
-		if member.Roles != roles {
+		if member.ExplicitRoles != roles {
 			if _, err := a.UpdateTeamMemberRoles(team.Id, user.Id, roles); err != nil {
 				return err
 			}
+		}
+
+		if member.SchemeAdmin != isSchemeAdmin || member.SchemeUser != isSchemeUser {
+			a.UpdateTeamMemberSchemeRoles(team.Id, user.Id, isSchemeUser, isSchemeAdmin)
 		}
 
 		if defaultChannel, err := a.GetChannelByName(model.DEFAULT_CHANNEL, team.Id); err != nil {
@@ -837,10 +1138,24 @@ func (a *App) ImportUserChannels(user *model.User, team *model.Team, teamMember 
 		}
 
 		var roles string
+		isSchemeUser := true
+		isSchemeAdmin := false
+
 		if cdata.Roles == nil {
-			roles = model.CHANNEL_USER_ROLE_ID
+			isSchemeUser = true
 		} else {
-			roles = *cdata.Roles
+			rawRoles := *cdata.Roles
+			explicitRoles := []string{}
+			for _, role := range strings.Fields(rawRoles) {
+				if role == model.CHANNEL_USER_ROLE_ID {
+					isSchemeUser = true
+				} else if role == model.CHANNEL_ADMIN_ROLE_ID {
+					isSchemeAdmin = true
+				} else {
+					explicitRoles = append(explicitRoles, role)
+				}
+			}
+			roles = strings.Join(explicitRoles, " ")
 		}
 
 		var member *model.ChannelMember
@@ -852,10 +1167,14 @@ func (a *App) ImportUserChannels(user *model.User, team *model.Team, teamMember 
 			}
 		}
 
-		if member.Roles != roles {
+		if member.ExplicitRoles != roles {
 			if _, err := a.UpdateChannelMemberRoles(channel.Id, user.Id, roles); err != nil {
 				return err
 			}
+		}
+
+		if member.SchemeAdmin != isSchemeAdmin || member.SchemeUser != isSchemeUser {
+			a.UpdateChannelMemberSchemeRoles(channel.Id, user.Id, isSchemeUser, isSchemeAdmin)
 		}
 
 		if cdata.NotifyProps != nil {
@@ -929,7 +1248,7 @@ func validateUserImportData(data *UserImportData) *model.AppError {
 	}
 
 	if data.Password != nil && len(*data.Password) == 0 {
-		return model.NewAppError("BulkImport", "app.import.validate_user_import_data.pasword_length.error", nil, "", http.StatusBadRequest)
+		return model.NewAppError("BulkImport", "app.import.validate_user_import_data.password_length.error", nil, "", http.StatusBadRequest)
 	}
 
 	if data.Password != nil && len(*data.Password) > model.USER_PASSWORD_MAX_LENGTH {
@@ -1618,6 +1937,71 @@ func validateDirectPostImportData(data *DirectPostImportData, maxPostSize int) *
 	return nil
 }
 
+func (a *App) ImportEmoji(data *EmojiImportData, dryRun bool) *model.AppError {
+	if err := validateEmojiImportData(data); err != nil {
+		return err
+	}
+
+	// If this is a Dry Run, do not continue any further.
+	if dryRun {
+		return nil
+	}
+
+	var emoji *model.Emoji
+
+	if result := <-a.Srv.Store.Emoji().GetByName(*data.Name); result.Err != nil && result.Err.StatusCode != http.StatusNotFound {
+		return result.Err
+	} else if result.Data != nil {
+		emoji = result.Data.(*model.Emoji)
+	}
+
+	alreadyExists := emoji != nil
+
+	if !alreadyExists {
+		emoji = &model.Emoji{
+			Name: *data.Name,
+		}
+		emoji.PreSave()
+	}
+
+	file, err := os.Open(*data.Image)
+	if err != nil {
+		return model.NewAppError("BulkImport", "app.import.emoji.bad_file.error", map[string]interface{}{"EmojiName": *data.Name}, "", http.StatusBadRequest)
+	}
+
+	if _, err := a.WriteFile(file, getEmojiImagePath(emoji.Id)); err != nil {
+		return err
+	}
+
+	if !alreadyExists {
+		if result := <-a.Srv.Store.Emoji().Save(emoji); result.Err != nil {
+			return result.Err
+		}
+	}
+
+	return nil
+}
+
+func validateEmojiImportData(data *EmojiImportData) *model.AppError {
+	if data == nil {
+		return model.NewAppError("BulkImport", "app.import.validate_emoji_import_data.empty.error", nil, "", http.StatusBadRequest)
+	}
+
+	if data.Name == nil || len(*data.Name) == 0 {
+		return model.NewAppError("BulkImport", "app.import.validate_emoji_import_data.name_missing.error", nil, "", http.StatusBadRequest)
+	}
+
+	if err := model.IsValidEmojiName(*data.Name); err != nil {
+		return err
+	}
+
+	if data.Image == nil || len(*data.Image) == 0 {
+		return model.NewAppError("BulkImport", "app.import.validate_emoji_import_data.image_missing.error", nil, "", http.StatusBadRequest)
+	}
+
+	return nil
+}
+
 //
 // -- Old SlackImport Functions --
 // Import functions are sutible for entering posts and users into the database without
@@ -1699,10 +2083,12 @@ func (a *App) OldImportFile(timestamp time.Time, file io.Reader, teamId string, 
 		return nil, err
 	}
 
-	img, width, height := prepareImage(data)
-	if img != nil {
-		a.generateThumbnailImage(*img, fileInfo.ThumbnailPath, width, height)
-		a.generatePreviewImage(*img, fileInfo.PreviewPath, width)
+	if fileInfo.IsImage() && fileInfo.MimeType != "image/svg+xml" {
+		img, width, height := prepareImage(data)
+		if img != nil {
+			a.generateThumbnailImage(*img, fileInfo.ThumbnailPath, width, height)
+			a.generatePreviewImage(*img, fileInfo.PreviewPath, width)
+		}
 	}
 
 	return fileInfo, nil

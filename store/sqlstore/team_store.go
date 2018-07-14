@@ -342,7 +342,7 @@ func (s SqlTeamStore) GetAll() store.StoreChannel {
 func (s SqlTeamStore) GetAllPage(offset int, limit int) store.StoreChannel {
 	return store.Do(func(result *store.StoreResult) {
 		var data []*model.Team
-		if _, err := s.GetReplica().Select(&data, "SELECT * FROM Teams LIMIT :Limit OFFSET :Offset", map[string]interface{}{"Offset": offset, "Limit": limit}); err != nil {
+		if _, err := s.GetReplica().Select(&data, "SELECT * FROM Teams ORDER BY DisplayName LIMIT :Limit OFFSET :Offset", map[string]interface{}{"Offset": offset, "Limit": limit}); err != nil {
 			result.Err = model.NewAppError("SqlTeamStore.GetAllTeams", "store.sql_team.get_all.app_error", nil, err.Error(), http.StatusInternalServerError)
 		}
 
@@ -755,8 +755,12 @@ func (s SqlTeamStore) MigrateTeamMembers(fromTeamId string, fromUserId string) s
 		for _, member := range teamMembers {
 			roles := strings.Fields(member.Roles)
 			var newRoles []string
-			member.SchemeAdmin = sql.NullBool{Bool: false, Valid: true}
-			member.SchemeUser = sql.NullBool{Bool: false, Valid: true}
+			if !member.SchemeAdmin.Valid {
+				member.SchemeAdmin = sql.NullBool{Bool: false, Valid: true}
+			}
+			if !member.SchemeUser.Valid {
+				member.SchemeUser = sql.NullBool{Bool: false, Valid: true}
+			}
 			for _, role := range roles {
 				if role == model.TEAM_ADMIN_ROLE_ID {
 					member.SchemeAdmin = sql.NullBool{Bool: true, Valid: true}
@@ -799,6 +803,75 @@ func (s SqlTeamStore) ResetAllTeamSchemes() store.StoreChannel {
 	return store.Do(func(result *store.StoreResult) {
 		if _, err := s.GetMaster().Exec("UPDATE Teams SET SchemeId=''"); err != nil {
 			result.Err = model.NewAppError("SqlTeamStore.ResetAllTeamSchemes", "store.sql_team.reset_all_team_schemes.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+	})
+}
+
+func (s SqlTeamStore) ClearAllCustomRoleAssignments() store.StoreChannel {
+	return store.Do(func(result *store.StoreResult) {
+		builtInRoles := model.MakeDefaultRoles()
+		lastUserId := strings.Repeat("0", 26)
+		lastTeamId := strings.Repeat("0", 26)
+
+		for true {
+			var transaction *gorp.Transaction
+			var err error
+
+			if transaction, err = s.GetMaster().Begin(); err != nil {
+				result.Err = model.NewAppError("SqlTeamStore.ClearAllCustomRoleAssignments", "store.sql_team.clear_all_custom_role_assignments.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			var teamMembers []*teamMember
+			if _, err := transaction.Select(&teamMembers, "SELECT * from TeamMembers WHERE (TeamId, UserId) > (:TeamId, :UserId) ORDER BY TeamId, UserId LIMIT 1000", map[string]interface{}{"TeamId": lastTeamId, "UserId": lastUserId}); err != nil {
+				if err2 := transaction.Rollback(); err2 != nil {
+					result.Err = model.NewAppError("SqlTeamStore.ClearAllCustomRoleAssignments", "store.sql_team.clear_all_custom_role_assignments.rollback_transaction.app_error", nil, err2.Error(), http.StatusInternalServerError)
+					return
+				}
+				result.Err = model.NewAppError("SqlTeamStore.ClearAllCustomRoleAssignments", "store.sql_team.clear_all_custom_role_assignments.select.app_error", nil, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			if len(teamMembers) == 0 {
+				break
+			}
+
+			for _, member := range teamMembers {
+				lastUserId = member.UserId
+				lastTeamId = member.TeamId
+
+				var newRoles []string
+
+				for _, role := range strings.Fields(member.Roles) {
+					for name := range builtInRoles {
+						if name == role {
+							newRoles = append(newRoles, role)
+							break
+						}
+					}
+				}
+
+				newRolesString := strings.Join(newRoles, " ")
+				if newRolesString != member.Roles {
+					if _, err := transaction.Exec("UPDATE TeamMembers SET Roles = :Roles WHERE UserId = :UserId AND TeamId = :TeamId", map[string]interface{}{"Roles": newRolesString, "TeamId": member.TeamId, "UserId": member.UserId}); err != nil {
+						if err2 := transaction.Rollback(); err2 != nil {
+							result.Err = model.NewAppError("SqlTeamStore.ClearAllCustomRoleAssignments", "store.sql_team.clear_all_custom_role_assignments.rollback_transaction.app_error", nil, err2.Error(), http.StatusInternalServerError)
+							return
+						}
+						result.Err = model.NewAppError("SqlTeamStore.ClearAllCustomRoleAssignments", "store.sql_team.clear_all_custom_role_assignments.update.app_error", nil, err.Error(), http.StatusInternalServerError)
+						return
+					}
+				}
+			}
+
+			if err := transaction.Commit(); err != nil {
+				if err2 := transaction.Rollback(); err2 != nil {
+					result.Err = model.NewAppError("SqlTeamStore.ClearAllCustomRoleAssignments", "store.sql_team.clear_all_custom_role_assignments.rollback_transaction.app_error", nil, err2.Error(), http.StatusInternalServerError)
+					return
+				}
+				result.Err = model.NewAppError("SqlTeamStore.ClearAllCustomRoleAssignments", "store.sql_team.clear_all_custom_role_assignments.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 	})
 }

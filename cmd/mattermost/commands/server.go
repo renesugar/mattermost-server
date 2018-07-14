@@ -98,10 +98,10 @@ func runServer(configFileLocation string, disableConfigWatch bool, usedPlatform 
 	a.DoAdvancedPermissionsMigration()
 	a.DoEmojisPermissionsMigration()
 
-	a.InitPlugins(*a.Config().PluginSettings.Directory, *a.Config().PluginSettings.ClientDirectory, nil)
+	a.InitPlugins(*a.Config().PluginSettings.Directory, *a.Config().PluginSettings.ClientDirectory)
 	a.AddConfigListener(func(prevCfg, cfg *model.Config) {
 		if *cfg.PluginSettings.Enable {
-			a.InitPlugins(*cfg.PluginSettings.Directory, *a.Config().PluginSettings.ClientDirectory, nil)
+			a.InitPlugins(*cfg.PluginSettings.Directory, *a.Config().PluginSettings.ClientDirectory)
 		} else {
 			a.ShutDownPlugins()
 		}
@@ -145,8 +145,6 @@ func runServer(configFileLocation string, disableConfigWatch bool, usedPlatform 
 	if a.Config().ServiceSettings.EnableTesting {
 		manualtesting.Init(api)
 	}
-
-	a.EnsureDiagnosticId()
 
 	a.Go(func() {
 		runSecurityJob(a)

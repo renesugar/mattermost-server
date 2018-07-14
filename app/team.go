@@ -17,6 +17,7 @@ import (
 
 	"github.com/mattermost/mattermost-server/mlog"
 	"github.com/mattermost/mattermost-server/model"
+	"github.com/mattermost/mattermost-server/plugin"
 	"github.com/mattermost/mattermost-server/utils"
 )
 
@@ -105,13 +106,22 @@ func (a *App) UpdateTeam(team *model.Team) (*model.Team, *model.AppError) {
 	oldTeam.AllowedDomains = team.AllowedDomains
 	oldTeam.LastTeamIconUpdate = team.LastTeamIconUpdate
 
-	if result := <-a.Srv.Store.Team().Update(oldTeam); result.Err != nil {
-		return nil, result.Err
+	oldTeam, err = a.updateTeamUnsanitized(oldTeam)
+	if err != nil {
+		return team, err
 	}
 
 	a.sendTeamEvent(oldTeam, model.WEBSOCKET_EVENT_UPDATE_TEAM)
 
 	return oldTeam, nil
+}
+
+func (a *App) updateTeamUnsanitized(team *model.Team) (*model.Team, *model.AppError) {
+	if result := <-a.Srv.Store.Team().Update(team); result.Err != nil {
+		return nil, result.Err
+	} else {
+		return result.Data.(*model.Team), nil
+	}
 }
 
 func (a *App) UpdateTeamScheme(team *model.Team) (*model.Team, *model.AppError) {
@@ -420,10 +430,26 @@ func (a *App) joinUserToTeam(team *model.Team, user *model.User) (*model.TeamMem
 }
 
 func (a *App) JoinUserToTeam(team *model.Team, user *model.User, userRequestorId string) *model.AppError {
-	if _, alreadyAdded, err := a.joinUserToTeam(team, user); err != nil {
+	tm, alreadyAdded, err := a.joinUserToTeam(team, user)
+	if err != nil {
 		return err
 	} else if alreadyAdded {
 		return nil
+	}
+
+	if a.PluginsReady() {
+		var actor *model.User
+		if userRequestorId != "" {
+			actor, err = a.GetUser(userRequestorId)
+		}
+
+		a.Go(func() {
+			pluginContext := &plugin.Context{}
+			a.Plugins.RunMultiPluginHook(func(hooks plugin.Hooks) bool {
+				hooks.UserHasJoinedTeam(pluginContext, tm, actor)
+				return true
+			}, plugin.UserHasJoinedTeamId)
+		})
 	}
 
 	if uua := <-a.Srv.Store.User().UpdateUpdateAt(user.Id); uua.Err != nil {
@@ -566,9 +592,8 @@ func (a *App) AddTeamMember(teamId, userId string) (*model.TeamMember, *model.Ap
 		return nil, err
 	}
 
-	var teamMember *model.TeamMember
-	var err *model.AppError
-	if teamMember, err = a.GetTeamMember(teamId, userId); err != nil {
+	teamMember, err := a.GetTeamMember(teamId, userId)
+	if err != nil {
 		return nil, err
 	}
 
@@ -683,10 +708,8 @@ func (a *App) RemoveUserFromTeam(teamId string, userId string, requestorId strin
 }
 
 func (a *App) LeaveTeam(team *model.Team, user *model.User, requestorId string) *model.AppError {
-	var teamMember *model.TeamMember
-	var err *model.AppError
-
-	if teamMember, err = a.GetTeamMember(team.Id, user.Id); err != nil {
+	teamMember, err := a.GetTeamMember(team.Id, user.Id)
+	if err != nil {
 		return model.NewAppError("LeaveTeam", "api.team.remove_user_from_team.missing.app_error", nil, err.Error(), http.StatusBadRequest)
 	}
 
@@ -744,6 +767,21 @@ func (a *App) LeaveTeam(team *model.Team, user *model.User, requestorId string) 
 		return result.Err
 	}
 
+	if a.PluginsReady() {
+		var actor *model.User
+		if requestorId != "" {
+			actor, err = a.GetUser(requestorId)
+		}
+
+		a.Go(func() {
+			pluginContext := &plugin.Context{}
+			a.Plugins.RunMultiPluginHook(func(hooks plugin.Hooks) bool {
+				hooks.UserHasLeftTeam(pluginContext, teamMember, actor)
+				return true
+			}, plugin.UserHasLeftTeamId)
+		})
+	}
+
 	if uua := <-a.Srv.Store.User().UpdateUpdateAt(user.Id); uua.Err != nil {
 		return uua.Err
 	}
@@ -796,6 +834,10 @@ func (a *App) postRemoveFromTeamMessage(user *model.User, channel *model.Channel
 }
 
 func (a *App) InviteNewUsersToTeam(emailList []string, teamId, senderId string) *model.AppError {
+	if !*a.Config().ServiceSettings.EnableEmailInvitations {
+		return model.NewAppError("InviteNewUsersToTeam", "api.team.invite_members.disabled.app_error", nil, "", http.StatusNotImplemented)
+	}
+
 	if len(emailList) == 0 {
 		err := model.NewAppError("InviteNewUsersToTeam", "api.team.invite_members.no_one.app_error", nil, "", http.StatusBadRequest)
 		return err
@@ -833,7 +875,7 @@ func (a *App) InviteNewUsersToTeam(emailList []string, teamId, senderId string) 
 	}
 
 	nameFormat := *a.Config().TeamSettings.TeammateNameDisplay
-	a.SendInviteEmails(team, user.GetDisplayName(nameFormat), emailList, a.GetSiteURL())
+	a.SendInviteEmails(team, user.GetDisplayName(nameFormat), user.Id, emailList, a.GetSiteURL())
 
 	return nil
 }

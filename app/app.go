@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"net"
 	"net/http"
+	"path"
 	"reflect"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
+	"github.com/throttled/throttled"
 
 	"github.com/mattermost/mattermost-server/einterfaces"
 	ejobs "github.com/mattermost/mattermost-server/einterfaces/jobs"
@@ -23,7 +25,7 @@ import (
 	tjobs "github.com/mattermost/mattermost-server/jobs/interfaces"
 	"github.com/mattermost/mattermost-server/mlog"
 	"github.com/mattermost/mattermost-server/model"
-	"github.com/mattermost/mattermost-server/plugin/pluginenv"
+	"github.com/mattermost/mattermost-server/plugin"
 	"github.com/mattermost/mattermost-server/store"
 	"github.com/mattermost/mattermost-server/store/sqlstore"
 	"github.com/mattermost/mattermost-server/utils"
@@ -40,12 +42,11 @@ type App struct {
 
 	Log *mlog.Logger
 
-	PluginEnv                *pluginenv.Environment
-	PluginConfigListenerId   string
-	IsPluginSandboxSupported bool
-	pluginStatuses           map[string]*model.PluginStatus
+	Plugins                *plugin.Environment
+	PluginConfigListenerId string
 
-	EmailBatching *EmailBatchingJob
+	EmailBatching    *EmailBatchingJob
+	EmailRateLimiter *throttled.GCRARateLimiter
 
 	Hubs                        []*Hub
 	HubsStopCheckingForDeadlock chan bool
@@ -90,9 +91,10 @@ type App struct {
 	pluginCommands     []*PluginCommand
 	pluginCommandsLock sync.RWMutex
 
-	clientConfig     map[string]string
-	clientConfigHash string
-	diagnosticId     string
+	clientConfig        map[string]string
+	clientConfigHash    string
+	limitedClientConfig map[string]string
+	diagnosticId        string
 
 	phase2PermissionsMigrationComplete bool
 }
@@ -107,10 +109,12 @@ func New(options ...Option) (outApp *App, outErr error) {
 		panic("Only one App should exist at a time. Did you forget to call Shutdown()?")
 	}
 
+	rootRouter := mux.NewRouter()
+
 	app := &App{
 		goroutineExitSignal: make(chan struct{}, 1),
 		Srv: &Server{
-			Router: mux.NewRouter(),
+			RootRouter: rootRouter,
 		},
 		sessionCache:     utils.NewLru(model.SESSION_CACHE_SIZE),
 		configFile:       "config.json",
@@ -180,7 +184,10 @@ func New(options ...Option) (outApp *App, outErr error) {
 		})
 
 	})
-	app.regenerateClientConfig()
+
+	if err := app.SetupInviteEmailRateLimiting(); err != nil {
+		return nil, err
+	}
 
 	mlog.Info("Server is initializing...")
 
@@ -203,12 +210,29 @@ func New(options ...Option) (outApp *App, outErr error) {
 		return nil, errors.Wrapf(err, "unable to ensure asymmetric signing key")
 	}
 
-	app.initJobs()
+	app.EnsureDiagnosticId()
+	app.regenerateClientConfig()
 
-	app.initBuiltInPlugins()
+	app.initJobs()
+	app.AddLicenseListener(func() {
+		app.initJobs()
+	})
+
+	subpath, err := utils.GetSubpathFromConfig(app.Config())
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to parse SiteURL subpath")
+	}
+	app.Srv.Router = app.Srv.RootRouter.PathPrefix(subpath).Subrouter()
 	app.Srv.Router.HandleFunc("/plugins/{plugin_id:[A-Za-z0-9\\_\\-\\.]+}", app.ServePluginRequest)
 	app.Srv.Router.HandleFunc("/plugins/{plugin_id:[A-Za-z0-9\\_\\-\\.]+}/{anything:.*}", app.ServePluginRequest)
 
+	// If configured with a subpath, redirect 404s at the root back into the subpath.
+	if subpath != "/" {
+		app.Srv.RootRouter.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = path.Join(subpath, r.URL.Path)
+			http.Redirect(w, r, r.URL.String(), http.StatusFound)
+		})
+	}
 	app.Srv.Router.NotFoundHandler = http.HandlerFunc(app.Handle404)
 
 	app.Srv.WebSocketRouter = &WebSocketRouter{
@@ -509,7 +533,7 @@ func (a *App) Handle404(w http.ResponseWriter, r *http.Request) {
 
 	mlog.Debug(fmt.Sprintf("%v: code=404 ip=%v", r.URL.Path, utils.GetIpAddress(r)))
 
-	utils.RenderWebAppError(w, r, err, a.AsymmetricSigningKey())
+	utils.RenderWebAppError(a.Config(), w, r, err, a.AsymmetricSigningKey())
 }
 
 // This function migrates the default built in roles from code/config to the database.

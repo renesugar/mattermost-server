@@ -67,6 +67,8 @@ type Store interface {
 	Plugin() PluginStore
 	MarkSystemRanUnitTests()
 	Close()
+	LockToMaster()
+	UnlockFromMaster()
 	DropAllTables()
 	TotalMasterDbConnections() int
 	TotalReadDbConnections() int
@@ -107,6 +109,7 @@ type TeamStore interface {
 	GetTeamsByScheme(schemeId string, offset int, limit int) StoreChannel
 	MigrateTeamMembers(fromTeamId string, fromUserId string) StoreChannel
 	ResetAllTeamSchemes() StoreChannel
+	ClearAllCustomRoleAssignments() StoreChannel
 }
 
 type ChannelStore interface {
@@ -167,6 +170,7 @@ type ChannelStore interface {
 	GetChannelsByScheme(schemeId string, offset int, limit int) StoreChannel
 	MigrateChannelMembers(fromChannelId string, fromUserId string) StoreChannel
 	ResetAllChannelSchemes() StoreChannel
+	ClearAllCustomRoleAssignments() StoreChannel
 }
 
 type ChannelMemberHistoryStore interface {
@@ -258,6 +262,7 @@ type UserStore interface {
 	AnalyticsGetSystemAdminCount() StoreChannel
 	GetProfilesNotInTeam(teamId string, offset int, limit int) StoreChannel
 	GetEtagForProfilesNotInTeam(teamId string) StoreChannel
+	ClearAllCustomRoleAssignments() StoreChannel
 }
 
 type SessionStore interface {
@@ -427,11 +432,13 @@ type FileInfoStore interface {
 	Get(id string) StoreChannel
 	GetByPath(path string) StoreChannel
 	GetForPost(postId string, readFromMaster bool, allowFromCache bool) StoreChannel
+	GetForUser(userId string) StoreChannel
 	InvalidateFileInfosForPostCache(postId string)
 	AttachToPost(fileId string, postId string) StoreChannel
 	DeleteForPost(postId string) StoreChannel
 	PermanentDelete(fileId string) StoreChannel
 	PermanentDeleteBatch(endTime int64, limit int64) StoreChannel
+	PermanentDeleteByUser(userId string) StoreChannel
 	ClearCaches()
 }
 
@@ -489,6 +496,7 @@ type RoleStore interface {
 type SchemeStore interface {
 	Save(scheme *model.Scheme) StoreChannel
 	Get(schemeId string) StoreChannel
+	GetByName(schemeName string) StoreChannel
 	GetAllPage(scope string, offset int, limit int) StoreChannel
 	Delete(schemeId string) StoreChannel
 	PermanentDeleteAll() StoreChannel

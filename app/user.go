@@ -24,6 +24,7 @@ import (
 
 	"github.com/disintegration/imaging"
 	"github.com/golang/freetype"
+	"github.com/golang/freetype/truetype"
 	"github.com/mattermost/mattermost-server/einterfaces"
 	"github.com/mattermost/mattermost-server/mlog"
 	"github.com/mattermost/mattermost-server/model"
@@ -696,12 +697,7 @@ func CreateProfileImage(username string, userId string, initialFont string) ([]b
 
 	initial := string(strings.ToUpper(username)[0])
 
-	fontDir, _ := utils.FindDir("fonts")
-	fontBytes, err := ioutil.ReadFile(filepath.Join(fontDir, initialFont))
-	if err != nil {
-		return nil, model.NewAppError("CreateProfileImage", "api.user.create_profile_image.default_font.app_error", nil, err.Error(), http.StatusInternalServerError)
-	}
-	font, err := freetype.ParseFont(fontBytes)
+	font, err := getFont(initialFont)
 	if err != nil {
 		return nil, model.NewAppError("CreateProfileImage", "api.user.create_profile_image.default_font.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
@@ -719,7 +715,7 @@ func CreateProfileImage(username string, userId string, initialFont string) ([]b
 	c.SetDst(dstImg)
 	c.SetSrc(srcImg)
 
-	pt := freetype.Pt(IMAGE_PROFILE_PIXEL_DIMENSION/6, IMAGE_PROFILE_PIXEL_DIMENSION*2/3)
+	pt := freetype.Pt(IMAGE_PROFILE_PIXEL_DIMENSION/5, IMAGE_PROFILE_PIXEL_DIMENSION*2/3)
 	_, err = c.DrawString(initial, pt)
 	if err != nil {
 		return nil, model.NewAppError("CreateProfileImage", "api.user.create_profile_image.initial.app_error", nil, err.Error(), http.StatusInternalServerError)
@@ -732,6 +728,21 @@ func CreateProfileImage(username string, userId string, initialFont string) ([]b
 	} else {
 		return buf.Bytes(), nil
 	}
+}
+
+func getFont(initialFont string) (*truetype.Font, error) {
+	// Some people have the old default font still set, so just treat that as if they're using the new default
+	if initialFont == "luximbi.ttf" {
+		initialFont = "nunito-bold.ttf"
+	}
+
+	fontDir, _ := utils.FindDir("fonts")
+	fontBytes, err := ioutil.ReadFile(filepath.Join(fontDir, initialFont))
+	if err != nil {
+		return nil, err
+	}
+
+	return freetype.ParseFont(fontBytes)
 }
 
 func (a *App) GetProfileImage(user *model.User) ([]byte, bool, *model.AppError) {
@@ -862,22 +873,6 @@ func (a *App) UpdatePasswordAsUser(userId, currentPassword, newPassword string) 
 	return a.UpdatePasswordSendEmail(user, newPassword, T("api.user.update_password.menu"))
 }
 
-func (a *App) UpdateNonSSOUserActive(userId string, active bool) (*model.User, *model.AppError) {
-	var user *model.User
-	var err *model.AppError
-	if user, err = a.GetUser(userId); err != nil {
-		return nil, err
-	}
-
-	if user.IsSSOUser() {
-		err := model.NewAppError("UpdateActive", "api.user.update_active.no_deactivate_sso.app_error", nil, "userId="+user.Id, http.StatusBadRequest)
-		err.StatusCode = http.StatusBadRequest
-		return nil, err
-	}
-
-	return a.UpdateActive(user, active)
-}
-
 func (a *App) UpdateActive(user *model.User, active bool) (*model.User, *model.AppError) {
 	if active {
 		user.DeleteAt = 0
@@ -895,9 +890,6 @@ func (a *App) UpdateActive(user *model.User, active bool) (*model.User, *model.A
 		}
 
 		ruser := result.Data.([2]*model.User)[0]
-		options := a.Config().GetSanitizeOptions()
-		options["passwordupdate"] = false
-		ruser.Sanitize(options)
 
 		if !active {
 			a.SetStatusOffline(ruser.Id, false)
@@ -1307,6 +1299,45 @@ func (a *App) PermanentDeleteUser(user *model.User) *model.AppError {
 		return result.Err
 	}
 
+	fchan := a.Srv.Store.FileInfo().GetForUser(user.Id)
+	var infos []*model.FileInfo
+	if result := <-fchan; result.Err != nil {
+		mlog.Warn("Error getting file list for user from FileInfoStore")
+	} else {
+		infos = result.Data.([]*model.FileInfo)
+		for _, info := range infos {
+			res, err := a.FileExists(info.Path)
+
+			if err != nil {
+				mlog.Warn(
+					"Error checking existence of file",
+					mlog.String("path", info.Path),
+					mlog.Err(err),
+				)
+				continue
+			}
+
+			if !res {
+				mlog.Warn("File not found", mlog.String("path", info.Path))
+				continue
+			}
+
+			err = a.RemoveFile(info.Path)
+
+			if err != nil {
+				mlog.Warn(
+					"Unable to remove file",
+					mlog.String("path", info.Path),
+					mlog.Err(err),
+				)
+			}
+		}
+	}
+
+	if result := <-a.Srv.Store.FileInfo().PermanentDeleteByUser(user.Id); result.Err != nil {
+		return result.Err
+	}
+
 	if result := <-a.Srv.Store.User().PermanentDelete(user.Id); result.Err != nil {
 		return result.Err
 	}
@@ -1390,6 +1421,17 @@ func (a *App) GetVerifyEmailToken(token string) (*model.Token, *model.AppError) 
 		}
 		return token, nil
 	}
+}
+
+func (a *App) GetTotalUsersStats() (*model.UsersStats, *model.AppError) {
+	stats := &model.UsersStats{}
+
+	if result := <-a.Srv.Store.User().GetTotalUsersCount(); result.Err != nil {
+		return nil, result.Err
+	} else {
+		stats.TotalUsersCount = result.Data.(int64)
+	}
+	return stats, nil
 }
 
 func (a *App) VerifyUserEmail(userId string) *model.AppError {

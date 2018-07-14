@@ -4,7 +4,6 @@
 package app
 
 import (
-	"encoding/json"
 	"runtime"
 
 	"github.com/mattermost/mattermost-server/mlog"
@@ -36,6 +35,7 @@ const (
 	TRACK_CONFIG_WEBRTC         = "config_webrtc"
 	TRACK_CONFIG_SUPPORT        = "config_support"
 	TRACK_CONFIG_NATIVEAPP      = "config_nativeapp"
+	TRACK_CONFIG_EXPERIMENTAL   = "config_experimental"
 	TRACK_CONFIG_ANALYTICS      = "config_analytics"
 	TRACK_CONFIG_ANNOUNCEMENT   = "config_announcement"
 	TRACK_CONFIG_ELASTICSEARCH  = "config_elasticsearch"
@@ -97,13 +97,7 @@ func pluginSetting(pluginSettings *model.PluginSettings, plugin, key string, def
 	if !ok {
 		return defaultValue
 	}
-	var m map[string]interface{}
-	if b, err := json.Marshal(settings); err != nil {
-		return defaultValue
-	} else {
-		json.Unmarshal(b, &m)
-	}
-	if value, ok := m[key]; ok {
+	if value, ok := settings[key]; ok {
 		return value
 	}
 	return defaultValue
@@ -207,6 +201,9 @@ func (a *App) trackConfig() {
 		"enable_user_access_tokens":                               *cfg.ServiceSettings.EnableUserAccessTokens,
 		"enable_custom_emoji":                                     *cfg.ServiceSettings.EnableCustomEmoji,
 		"enable_emoji_picker":                                     *cfg.ServiceSettings.EnableEmojiPicker,
+		"enable_gif_picker":                                       *cfg.ServiceSettings.EnableGifPicker,
+		"gfycat_api_key":                                          isDefault(*cfg.ServiceSettings.GfycatApiKey, model.SERVICE_SETTINGS_DEFAULT_GFYCAT_API_KEY),
+		"gfycat_api_secret":                                       isDefault(*cfg.ServiceSettings.GfycatApiSecret, model.SERVICE_SETTINGS_DEFAULT_GFYCAT_API_SECRET),
 		"experimental_enable_authentication_transfer":             *cfg.ServiceSettings.ExperimentalEnableAuthenticationTransfer,
 		"restrict_custom_emoji_creation":                          *cfg.ServiceSettings.RestrictCustomEmojiCreation,
 		"enable_testing":                                          cfg.ServiceSettings.EnableTesting,
@@ -250,6 +247,10 @@ func (a *App) trackConfig() {
 		"isdefault_image_proxy_options":                           isDefault(*cfg.ServiceSettings.ImageProxyOptions, ""),
 		"websocket_url":                                           isDefault(*cfg.ServiceSettings.WebsocketURL, ""),
 		"allow_cookies_for_subdomains":                            *cfg.ServiceSettings.AllowCookiesForSubdomains,
+		"enable_api_team_deletion":                                *cfg.ServiceSettings.EnableAPITeamDeletion,
+		"experimental_enable_hardened_mode":                       *cfg.ServiceSettings.ExperimentalEnableHardenedMode,
+		"experimental_limit_client_config":                        *cfg.ServiceSettings.ExperimentalLimitClientConfig,
+		"enable_email_invitations":                                *cfg.ServiceSettings.EnableEmailInvitations,
 	})
 
 	a.SendDiagnostic(TRACK_CONFIG_TEAM, map[string]interface{}{
@@ -263,6 +264,7 @@ func (a *App) trackConfig() {
 		"restrict_public_channel_deletion":          *cfg.TeamSettings.RestrictPublicChannelDeletion,
 		"restrict_private_channel_deletion":         *cfg.TeamSettings.RestrictPrivateChannelDeletion,
 		"enable_open_server":                        *cfg.TeamSettings.EnableOpenServer,
+		"enable_user_deactivation":                  *cfg.TeamSettings.EnableUserDeactivation,
 		"enable_custom_brand":                       *cfg.TeamSettings.EnableCustomBrand,
 		"restrict_direct_message":                   *cfg.TeamSettings.RestrictDirectMessage,
 		"max_notifications_per_channel":             *cfg.TeamSettings.MaxNotificationsPerChannel,
@@ -292,13 +294,14 @@ func (a *App) trackConfig() {
 	})
 
 	a.SendDiagnostic(TRACK_CONFIG_SQL, map[string]interface{}{
-		"driver_name":                 *cfg.SqlSettings.DriverName,
-		"trace":                       cfg.SqlSettings.Trace,
-		"max_idle_conns":              *cfg.SqlSettings.MaxIdleConns,
-		"max_open_conns":              *cfg.SqlSettings.MaxOpenConns,
-		"data_source_replicas":        len(cfg.SqlSettings.DataSourceReplicas),
-		"data_source_search_replicas": len(cfg.SqlSettings.DataSourceSearchReplicas),
-		"query_timeout":               *cfg.SqlSettings.QueryTimeout,
+		"driver_name":                    *cfg.SqlSettings.DriverName,
+		"trace":                          cfg.SqlSettings.Trace,
+		"max_idle_conns":                 *cfg.SqlSettings.MaxIdleConns,
+		"conn_max_lifetime_milliseconds": *cfg.SqlSettings.ConnMaxLifetimeMilliseconds,
+		"max_open_conns":                 *cfg.SqlSettings.MaxOpenConns,
+		"data_source_replicas":           len(cfg.SqlSettings.DataSourceReplicas),
+		"data_source_search_replicas":    len(cfg.SqlSettings.DataSourceSearchReplicas),
+		"query_timeout":                  *cfg.SqlSettings.QueryTimeout,
 	})
 
 	a.SendDiagnostic(TRACK_CONFIG_LOG, map[string]interface{}{
@@ -410,6 +413,7 @@ func (a *App) trackConfig() {
 		"isdefault_nickname_attribute":        isDefault(*cfg.LdapSettings.NicknameAttribute, model.LDAP_SETTINGS_DEFAULT_NICKNAME_ATTRIBUTE),
 		"isdefault_id_attribute":              isDefault(*cfg.LdapSettings.IdAttribute, model.LDAP_SETTINGS_DEFAULT_ID_ATTRIBUTE),
 		"isdefault_position_attribute":        isDefault(*cfg.LdapSettings.PositionAttribute, model.LDAP_SETTINGS_DEFAULT_POSITION_ATTRIBUTE),
+		"isdefault_login_id_attribute":        isDefault(*cfg.LdapSettings.LoginIdAttribute, ""),
 		"isdefault_login_field_name":          isDefault(*cfg.LdapSettings.LoginFieldName, model.LDAP_SETTINGS_DEFAULT_LOGIN_FIELD_NAME),
 		"isdefault_login_button_color":        isDefault(*cfg.LdapSettings.LoginButtonColor, ""),
 		"isdefault_login_button_border_color": isDefault(*cfg.LdapSettings.LoginButtonBorderColor, ""),
@@ -471,6 +475,11 @@ func (a *App) trackConfig() {
 		"isdefault_turn_uri": isDefault(*cfg.WebrtcSettings.TurnURI, model.WEBRTC_SETTINGS_DEFAULT_TURN_URI),
 	})
 
+	a.SendDiagnostic(TRACK_CONFIG_EXPERIMENTAL, map[string]interface{}{
+		"client_side_cert_enable":          *cfg.ExperimentalSettings.ClientSideCertEnable,
+		"isdefault_client_side_cert_check": isDefault(*cfg.ExperimentalSettings.ClientSideCertCheck, model.CLIENT_SIDE_CERT_CHECK_PRIMARY_AUTH),
+	})
+
 	a.SendDiagnostic(TRACK_CONFIG_ANALYTICS, map[string]interface{}{
 		"isdefault_max_users_for_statistics": isDefault(*cfg.AnalyticsSettings.MaxUsersForStatistics, model.ANALYTICS_SETTINGS_DEFAULT_MAX_USERS_FOR_STATISTICS),
 	})
@@ -525,7 +534,8 @@ func (a *App) trackConfig() {
 	})
 
 	a.SendDiagnostic(TRACK_CONFIG_DISPLAY, map[string]interface{}{
-		"experimental_timezone": *cfg.DisplaySettings.ExperimentalTimezone,
+		"experimental_timezone":        *cfg.DisplaySettings.ExperimentalTimezone,
+		"isdefault_custom_url_schemes": len(*cfg.DisplaySettings.CustomUrlSchemes) != 0,
 	})
 
 	a.SendDiagnostic(TRACK_CONFIG_TIMEZONE, map[string]interface{}{
@@ -554,59 +564,60 @@ func (a *App) trackLicense() {
 }
 
 func (a *App) trackPlugins() {
-	if *a.Config().PluginSettings.Enable {
-		totalActiveCount := -1 // -1 to indicate disabled or error
-		webappActiveCount := 0
-		backendActiveCount := 0
-		totalInactiveCount := -1 // -1 to indicate disabled or error
-		webappInactiveCount := 0
-		backendInactiveCount := 0
+	if a.PluginsReady() {
+		totalEnabledCount := 0
+		webappEnabledCount := 0
+		backendEnabledCount := 0
+		totalDisabledCount := 0
+		webappDisabledCount := 0
+		backendDisabledCount := 0
+		brokenManifestCount := 0
 		settingsCount := 0
 
-		plugins, _ := a.GetPlugins()
+		pluginStates := a.Config().PluginSettings.PluginStates
+		plugins, _ := a.Plugins.Available()
 
-		if plugins != nil {
-			totalActiveCount = len(plugins.Active)
-
-			for _, plugin := range plugins.Active {
-				if plugin.Webapp != nil {
-					webappActiveCount += 1
+		if pluginStates != nil && plugins != nil {
+			for _, plugin := range plugins {
+				if plugin.Manifest == nil {
+					brokenManifestCount += 1
+					continue
 				}
-
-				if plugin.Backend != nil {
-					backendActiveCount += 1
+				if state, ok := pluginStates[plugin.Manifest.Id]; ok && state.Enable {
+					totalEnabledCount += 1
+					if plugin.Manifest.Backend != nil {
+						backendEnabledCount += 1
+					}
+					if plugin.Manifest.Webapp != nil {
+						webappEnabledCount += 1
+					}
+				} else {
+					totalDisabledCount += 1
+					if plugin.Manifest.Backend != nil {
+						backendDisabledCount += 1
+					}
+					if plugin.Manifest.Webapp != nil {
+						webappDisabledCount += 1
+					}
 				}
-
-				if plugin.SettingsSchema != nil {
+				if plugin.Manifest.SettingsSchema != nil {
 					settingsCount += 1
 				}
 			}
-
-			totalInactiveCount = len(plugins.Inactive)
-
-			for _, plugin := range plugins.Inactive {
-				if plugin.Webapp != nil {
-					webappInactiveCount += 1
-				}
-
-				if plugin.Backend != nil {
-					backendInactiveCount += 1
-				}
-
-				if plugin.SettingsSchema != nil {
-					settingsCount += 1
-				}
-			}
+		} else {
+			totalEnabledCount = -1  // -1 to indicate disabled or error
+			totalDisabledCount = -1 // -1 to indicate disabled or error
 		}
 
 		a.SendDiagnostic(TRACK_PLUGINS, map[string]interface{}{
-			"active_plugins":           totalActiveCount,
-			"active_webapp_plugins":    webappActiveCount,
-			"active_backend_plugins":   backendActiveCount,
-			"inactive_plugins":         totalInactiveCount,
-			"inactive_webapp_plugins":  webappInactiveCount,
-			"inactive_backend_plugins": backendInactiveCount,
-			"plugins_with_settings":    settingsCount,
+			"enabled_plugins":               totalEnabledCount,
+			"enabled_webapp_plugins":        webappEnabledCount,
+			"enabled_backend_plugins":       backendEnabledCount,
+			"disabled_plugins":              totalDisabledCount,
+			"disabled_webapp_plugins":       webappDisabledCount,
+			"disabled_backend_plugins":      backendDisabledCount,
+			"plugins_with_settings":         settingsCount,
+			"plugins_with_broken_manifests": brokenManifestCount,
 		})
 	}
 }

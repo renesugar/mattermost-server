@@ -5,6 +5,7 @@ package web
 
 import (
 	"net/http"
+	"path"
 	"regexp"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-server/app"
 	"github.com/mattermost/mattermost-server/mlog"
 	"github.com/mattermost/mattermost-server/model"
+	"github.com/mattermost/mattermost-server/plugin"
 	"github.com/mattermost/mattermost-server/utils"
 )
 
@@ -126,7 +128,8 @@ func (c *Context) MfaRequired() {
 		}
 
 		// Special case to let user get themself
-		if c.Path == "/api/v4/users/me" {
+		subpath, _ := utils.GetSubpathFromConfig(c.App.Config())
+		if c.Path == path.Join(subpath, "/api/v4/users/me") {
 			return
 		}
 
@@ -523,4 +526,12 @@ func (c *Context) RequireRoleName() *Context {
 	}
 
 	return c
+}
+
+func (c *Context) ToPluginContext() *plugin.Context {
+	return &plugin.Context{
+		//sessionId: c.Session.Id,
+		//requestId: c.RequestId,
+		//userIp: c.IpAddress,
+	}
 }

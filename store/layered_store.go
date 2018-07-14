@@ -181,6 +181,14 @@ func (s *LayeredStore) Close() {
 	s.DatabaseLayer.Close()
 }
 
+func (s *LayeredStore) LockToMaster() {
+	s.DatabaseLayer.LockToMaster()
+}
+
+func (s *LayeredStore) UnlockFromMaster() {
+	s.DatabaseLayer.UnlockFromMaster()
+}
+
 func (s *LayeredStore) DropAllTables() {
 	s.DatabaseLayer.DropAllTables()
 }
@@ -284,6 +292,12 @@ func (s *LayeredSchemeStore) Save(scheme *model.Scheme) StoreChannel {
 func (s *LayeredSchemeStore) Get(schemeId string) StoreChannel {
 	return s.RunQuery(func(supplier LayeredStoreSupplier) *LayeredStoreSupplierResult {
 		return supplier.SchemeGet(s.TmpContext, schemeId)
+	})
+}
+
+func (s *LayeredSchemeStore) GetByName(schemeName string) StoreChannel {
+	return s.RunQuery(func(supplier LayeredStoreSupplier) *LayeredStoreSupplierResult {
+		return supplier.SchemeGetByName(s.TmpContext, schemeName)
 	})
 }
 

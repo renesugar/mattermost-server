@@ -8,6 +8,7 @@ import (
 	b64 "encoding/base64"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
@@ -456,7 +457,13 @@ func (a *App) LoginByOAuth(service string, userData io.Reader, teamId string) (*
 		return nil, model.NewAppError("LoginByOAuth", "api.user.login_by_oauth.not_available.app_error",
 			map[string]interface{}{"Service": strings.Title(service)}, "", http.StatusNotImplemented)
 	} else {
-		authData = provider.GetAuthDataFromJson(bytes.NewReader(buf.Bytes()))
+		authUser := provider.GetUserFromJson(bytes.NewReader(buf.Bytes()))
+
+		if authUser.AuthData != nil {
+			authData = *authUser.AuthData
+		} else {
+			authData = ""
+		}
 	}
 
 	if len(authData) == 0 {
@@ -690,10 +697,13 @@ func (a *App) AuthorizeOAuthUser(w http.ResponseWriter, r *http.Request, service
 	if resp, err := a.HTTPClient(true).Do(req); err != nil {
 		return nil, "", stateProps, model.NewAppError("AuthorizeOAuthUser", "api.user.authorize_oauth_user.token_failed.app_error", nil, err.Error(), http.StatusInternalServerError)
 	} else {
+		bodyBytes, _ = ioutil.ReadAll(resp.Body)
+		resp.Body = ioutil.NopCloser(bytes.NewBuffer(bodyBytes))
+
 		ar = model.AccessResponseFromJson(resp.Body)
 		consumeAndClose(resp)
 
-		if ar == nil {
+		if ar == nil || resp.StatusCode != http.StatusOK {
 			return nil, "", stateProps, model.NewAppError("AuthorizeOAuthUser", "api.user.authorize_oauth_user.bad_response.app_error", nil, "response_body="+string(bodyBytes), http.StatusInternalServerError)
 		}
 	}
@@ -717,6 +727,15 @@ func (a *App) AuthorizeOAuthUser(w http.ResponseWriter, r *http.Request, service
 	if resp, err := a.HTTPClient(true).Do(req); err != nil {
 		return nil, "", stateProps, model.NewAppError("AuthorizeOAuthUser", "api.user.authorize_oauth_user.service.app_error", map[string]interface{}{"Service": service}, err.Error(), http.StatusInternalServerError)
 	} else {
+		bodyBytes, _ = ioutil.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			bodyString := string(bodyBytes)
+			mlog.Error("Error getting OAuth user: " + bodyString)
+			if service == model.SERVICE_GITLAB && resp.StatusCode == http.StatusForbidden && strings.Contains(bodyString, "Terms of Service") {
+				return nil, "", stateProps, model.NewAppError("AuthorizeOAuthUser", "oauth.gitlab.tos.error", nil, "", http.StatusBadRequest)
+			}
+		}
+		resp.Body = ioutil.NopCloser(bytes.NewBuffer(bodyBytes))
 		return resp.Body, teamId, stateProps, nil
 	}
 

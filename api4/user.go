@@ -22,6 +22,7 @@ func (api *API) InitUser() {
 	api.BaseRoutes.Users.Handle("/usernames", api.ApiSessionRequired(getUsersByNames)).Methods("POST")
 	api.BaseRoutes.Users.Handle("/search", api.ApiSessionRequired(searchUsers)).Methods("POST")
 	api.BaseRoutes.Users.Handle("/autocomplete", api.ApiSessionRequired(autocompleteUsers)).Methods("GET")
+	api.BaseRoutes.Users.Handle("/stats", api.ApiSessionRequired(getTotalUsersStats)).Methods("GET")
 
 	api.BaseRoutes.User.Handle("", api.ApiSessionRequired(getUser)).Methods("GET")
 	api.BaseRoutes.User.Handle("/image", api.ApiSessionRequiredTrustRequester(getProfileImage)).Methods("GET")
@@ -153,7 +154,11 @@ func getUserByUsername(c *Context, w http.ResponseWriter, r *http.Request) {
 	if c.HandleEtag(etag, "Get User", w, r) {
 		return
 	} else {
-		c.App.SanitizeProfile(user, c.IsSystemAdmin())
+		if c.Session.UserId == user.Id {
+			user.Sanitize(map[string]bool{})
+		} else {
+			c.App.SanitizeProfile(user, c.IsSystemAdmin())
+		}
 		w.Header().Set(model.HEADER_ETAG_SERVER, etag)
 		w.Write([]byte(user.ToJson()))
 		return
@@ -276,6 +281,20 @@ func setProfileImage(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	c.LogAudit("")
 	ReturnStatusOK(w)
+}
+
+func getTotalUsersStats(c *Context, w http.ResponseWriter, r *http.Request) {
+	if c.Err != nil {
+		return
+	}
+
+	if stats, err := c.App.GetTotalUsersStats(); err != nil {
+		c.Err = err
+		return
+	} else {
+		w.Write([]byte(stats.ToJson()))
+		return
+	}
 }
 
 func getUsers(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -968,8 +987,27 @@ func login(c *Context, w http.ResponseWriter, r *http.Request) {
 	deviceId := props["device_id"]
 	ldapOnly := props["ldap_only"] == "true"
 
+	if *c.App.Config().ExperimentalSettings.ClientSideCertEnable {
+		if license := c.App.License(); license == nil || !*license.Features.SAML {
+			c.Err = model.NewAppError("ClientSideCertNotAllowed", "api.user.login.client_side_cert.license.app_error", nil, "", http.StatusBadRequest)
+			return
+		} else {
+			certPem, certSubject, certEmail := c.App.CheckForClienSideCert(r)
+			mlog.Debug("Client Cert", mlog.String("cert_subject", certSubject), mlog.String("cert_email", certEmail))
+
+			if len(certPem) == 0 || len(certEmail) == 0 {
+				c.Err = model.NewAppError("ClientSideCertMissing", "api.user.login.client_side_cert.certificate.app_error", nil, "", http.StatusBadRequest)
+				return
+			} else if *c.App.Config().ExperimentalSettings.ClientSideCertCheck == model.CLIENT_SIDE_CERT_CHECK_PRIMARY_AUTH {
+				loginId = certEmail
+				password = "certificate"
+			}
+		}
+	}
+
 	c.LogAuditWithUserId(id, "attempt - login_id="+loginId)
 	user, err := c.App.AuthenticateUserForLogin(id, loginId, password, mfaToken, ldapOnly)
+
 	if err != nil {
 		c.LogAuditWithUserId(id, "failure - login_id="+loginId)
 		c.Err = err

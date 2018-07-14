@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-server/model"
 	"github.com/mattermost/mattermost-server/utils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCreateChannel(t *testing.T) {
@@ -208,8 +209,34 @@ func TestUpdateChannel(t *testing.T) {
 
 	channel.DisplayName = "Should not update"
 	_, resp = Client.UpdateChannel(channel)
-	CheckNotFoundStatus(t, resp)
+	CheckForbiddenStatus(t, resp)
 
+	// Test updating the header of someone else's GM channel.
+	user1 := th.CreateUser()
+	user2 := th.CreateUser()
+	user3 := th.CreateUser()
+
+	groupChannel, resp := Client.CreateGroupChannel([]string{user1.Id, user2.Id})
+	CheckNoError(t, resp)
+
+	groupChannel.Header = "lolololol"
+	Client.Logout()
+	Client.Login(user3.Email, user3.Password)
+	_, resp = Client.UpdateChannel(groupChannel)
+	CheckForbiddenStatus(t, resp)
+
+	// Test updating the header of someone else's GM channel.
+	Client.Logout()
+	Client.Login(user.Email, user.Password)
+
+	directChannel, resp := Client.CreateDirectChannel(user.Id, user1.Id)
+	CheckNoError(t, resp)
+
+	directChannel.Header = "lolololol"
+	Client.Logout()
+	Client.Login(user3.Email, user3.Password)
+	_, resp = Client.UpdateChannel(directChannel)
+	CheckForbiddenStatus(t, resp)
 }
 
 func TestPatchChannel(t *testing.T) {
@@ -266,6 +293,36 @@ func TestPatchChannel(t *testing.T) {
 
 	_, resp = th.SystemAdminClient.PatchChannel(th.BasicPrivateChannel.Id, patch)
 	CheckNoError(t, resp)
+
+	// Test updating the header of someone else's GM channel.
+	user1 := th.CreateUser()
+	user2 := th.CreateUser()
+	user3 := th.CreateUser()
+
+	groupChannel, resp := Client.CreateGroupChannel([]string{user1.Id, user2.Id})
+	CheckNoError(t, resp)
+
+	Client.Logout()
+	Client.Login(user3.Email, user3.Password)
+
+	channelPatch := &model.ChannelPatch{}
+	channelPatch.Header = new(string)
+	*channelPatch.Header = "lolololol"
+
+	_, resp = Client.PatchChannel(groupChannel.Id, channelPatch)
+	CheckForbiddenStatus(t, resp)
+
+	// Test updating the header of someone else's GM channel.
+	Client.Logout()
+	Client.Login(user.Email, user.Password)
+
+	directChannel, resp := Client.CreateDirectChannel(user.Id, user1.Id)
+	CheckNoError(t, resp)
+
+	Client.Logout()
+	Client.Login(user3.Email, user3.Password)
+	_, resp = Client.PatchChannel(directChannel.Id, channelPatch)
+	CheckForbiddenStatus(t, resp)
 }
 
 func TestCreateDirectChannel(t *testing.T) {
@@ -318,6 +375,23 @@ func TestCreateDirectChannel(t *testing.T) {
 
 	_, resp = th.SystemAdminClient.CreateDirectChannel(user3.Id, user2.Id)
 	CheckNoError(t, resp)
+}
+
+func TestDeleteDirectChannel(t *testing.T) {
+	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
+	Client := th.Client
+	user := th.BasicUser
+	user2 := th.BasicUser2
+
+	rgc, resp := Client.CreateDirectChannel(user.Id, user2.Id)
+	CheckNoError(t, resp)
+	CheckCreatedStatus(t, resp)
+	require.NotNil(t, rgc, "should have created a direct channel")
+
+	deleted, resp := Client.DeleteChannel(rgc.Id)
+	CheckErrorMessage(t, resp, "api.channel.delete_channel.type.invalid")
+	require.False(t, deleted, "should not have been able to delete direct channel.")
 }
 
 func TestCreateGroupChannel(t *testing.T) {
@@ -390,6 +464,26 @@ func TestCreateGroupChannel(t *testing.T) {
 
 	_, resp = th.SystemAdminClient.CreateGroupChannel(userIds)
 	CheckNoError(t, resp)
+}
+
+func TestDeleteGroupChannel(t *testing.T) {
+	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
+	Client := th.Client
+	user := th.BasicUser
+	user2 := th.BasicUser2
+	user3 := th.CreateUser()
+
+	userIds := []string{user.Id, user2.Id, user3.Id}
+
+	rgc, resp := Client.CreateGroupChannel(userIds)
+	CheckNoError(t, resp)
+	CheckCreatedStatus(t, resp)
+	require.NotNil(t, rgc, "should have created a group channel")
+
+	deleted, resp := Client.DeleteChannel(rgc.Id)
+	CheckErrorMessage(t, resp, "api.channel.delete_channel.type.invalid")
+	require.False(t, deleted, "should not have been able to delete group channel.")
 }
 
 func TestGetChannel(t *testing.T) {
@@ -1836,9 +1930,6 @@ func TestRemoveChannelMember(t *testing.T) {
 	if !pass {
 		t.Fatal("should have passed")
 	}
-
-	_, resp = Client.RemoveUserFromChannel(th.BasicChannel.Id, th.BasicUser2.Id)
-	CheckNoError(t, resp)
 
 	_, resp = Client.RemoveUserFromChannel(th.BasicChannel.Id, "junk")
 	CheckBadRequestStatus(t, resp)
